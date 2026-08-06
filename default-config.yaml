@@ -5,7 +5,7 @@
 # NIC defaults: the gitops repository is auto-created locally and mounted into
 # the cluster, and MetalLB's address pool is derived from the kind Docker
 # network.
-# 
+#
 # To customize the deployment, copy this file into your repo and edit it. Then
 # pass it it via the `config` input instead
 
