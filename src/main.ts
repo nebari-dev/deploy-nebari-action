@@ -1,27 +1,105 @@
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import * as core from '@actions/core'
-import { wait } from './wait.js'
+
+import { acquireNic, run as exec, waitForApplications } from './nic.js'
+
+// Resolve the config file. It is either the one passed by the consumer or
+// the built-in default that ships with the action (a local kind cluster with
+// an auto-created gitops repo).
+function resolveConfig(): string {
+  const input = core.getInput('config')
+  if (input) return path.resolve(input)
+
+  // The default config sits at the action root, one level above this module
+  // both in the source tree (src/) and in the bundle (dist/).
+  const defaultConfig = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'default-config.yaml'
+  )
+  if (!fs.existsSync(defaultConfig)) {
+    throw new Error(
+      `built-in default config not found at ${defaultConfig}; set the config input`
+    )
+  }
+  core.info(
+    `No config provided. Using the built-in default local config (${defaultConfig})`
+  )
+  return defaultConfig
+}
+
+function deploy(): void {
+  const config = resolveConfig()
+
+  const nic = acquireNic({
+    binary: core.getInput('nic-binary'),
+    version: core.getInput('nic-version'),
+    token: core.getInput('token')
+  })
+  exec(nic, ['version'])
+  core.setOutput('nic-binary', nic)
+
+  // Save teardown state before deploying so the post step can destroy a
+  // partially created deployment even when `nic deploy` fails mid-way.
+  core.saveState('nicBinary', nic)
+  core.saveState('config', config)
+  // getBooleanInput throws on malformed values. Validate here, before the
+  // deploy: destroy is the input that leaks infrastructure when misread, so
+  // it must fail closed. The post step then only ever sees normalized values.
+  core.saveState('destroy', core.getBooleanInput('destroy') ? 'true' : 'false')
+  core.saveState('force', core.getBooleanInput('force') ? 'true' : 'false')
+  core.saveState('deployStarted', 'true')
+
+  // Validate the wait inputs before deploying too: a malformed wait-timeout
+  // should cost seconds, not a completed cloud deploy. Strict parse:
+  // `parseInt(...) || 600` would turn an explicit 0 into 600, truncate
+  // '300s' to 300, and accept negatives.
+  const wait = core.getBooleanInput('wait')
+  const rawTimeout = core.getInput('wait-timeout')
+  if (wait && (!/^[0-9]+$/.test(rawTimeout) || parseInt(rawTimeout, 10) <= 0)) {
+    throw new Error(
+      `wait-timeout must be a positive integer number of seconds, got '${rawTimeout}'. ` +
+        'Set wait: false to skip waiting.'
+    )
+  }
+  const waitTimeout = parseInt(rawTimeout, 10)
+
+  // endGroup in finally: exec() throws on failure, and a failed deploy's
+  // output is exactly what must not end up inside a collapsed group.
+  core.startGroup('nic deploy')
+  try {
+    exec(nic, ['deploy', '-f', config])
+  } finally {
+    core.endGroup()
+  }
+
+  const kubeconfig = path.join(
+    process.env.RUNNER_TEMP || '/tmp',
+    `nic-kubeconfig-${process.env.GITHUB_ACTION || 'deploy'}`
+  )
+  exec(nic, ['kubeconfig', '-f', config, '-o', kubeconfig])
+  core.exportVariable('KUBECONFIG', kubeconfig)
+  core.setOutput('kubeconfig', kubeconfig)
+
+  if (wait) {
+    core.info(
+      `Waiting up to ${waitTimeout}s for Argo CD Applications to converge`
+    )
+    waitForApplications(kubeconfig, waitTimeout)
+  }
+}
 
 /**
- * The main function for the action.
- *
- * @returns Resolves when the action is complete.
+ * The main step of the action: acquire nic, deploy, export KUBECONFIG, and
+ * optionally wait for the deployment to converge.
  */
-export async function run(): Promise<void> {
+export function run(): void {
   try {
-    const ms: string = core.getInput('milliseconds')
-
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
-
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
-
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
-  } catch (error) {
-    // Fail the workflow run if an error occurs
-    if (error instanceof Error) core.setFailed(error.message)
+    deploy()
+  } catch (err) {
+    core.setFailed(err instanceof Error ? err.message : String(err))
   }
 }

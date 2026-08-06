@@ -1,3 +1,6 @@
+import * as fs$1 from 'node:fs';
+import * as path from 'node:path';
+import require$$1$3, { fileURLToPath } from 'node:url';
 import * as os from 'os';
 import os__default from 'os';
 import * as crypto from 'crypto';
@@ -25,13 +28,14 @@ import require$$1$2 from 'node:zlib';
 import require$$5$1 from 'node:perf_hooks';
 import require$$8$1 from 'node:util/types';
 import require$$1$1 from 'node:worker_threads';
-import require$$1$3 from 'node:url';
 import require$$5$2 from 'node:async_hooks';
 import require$$1$4 from 'node:console';
 import require$$1$5 from 'node:dns';
 import require$$5$3 from 'string_decoder';
 import 'child_process';
 import 'timers';
+import { spawnSync } from 'node:child_process';
+import * as crypto$1 from 'node:crypto';
 
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -104,6 +108,9 @@ function toCommandProperties(annotationProperties) {
 function issueCommand(command, properties, message) {
     const cmd = new Command(command, properties, message);
     process.stdout.write(cmd.toString() + os.EOL);
+}
+function issue(name, message = '') {
+    issueCommand(name, {}, message);
 }
 const CMD_STRING = '::';
 class Command {
@@ -27951,6 +27958,56 @@ var ExitCode;
      */
     ExitCode[ExitCode["Failure"] = 1] = "Failure";
 })(ExitCode || (ExitCode = {}));
+//-----------------------------------------------------------------------
+// Variables
+//-----------------------------------------------------------------------
+/**
+ * Sets env variable for this action and future actions in the job
+ * @param name the name of the variable to set
+ * @param val the value of the variable. Non-string values will be converted to a string via JSON.stringify
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function exportVariable(name, val) {
+    const convertedVal = toCommandValue(val);
+    process.env[name] = convertedVal;
+    const filePath = process.env['GITHUB_ENV'] || '';
+    if (filePath) {
+        return issueFileCommand('ENV', prepareKeyValueMessage(name, val));
+    }
+    issueCommand('set-env', { name }, convertedVal);
+}
+/**
+ * Registers a secret which will get masked from logs
+ *
+ * @param secret - Value of the secret to be masked
+ * @remarks
+ * This function instructs the Actions runner to mask the specified value in any
+ * logs produced during the workflow run. Once registered, the secret value will
+ * be replaced with asterisks (***) whenever it appears in console output, logs,
+ * or error messages.
+ *
+ * This is useful for protecting sensitive information such as:
+ * - API keys
+ * - Access tokens
+ * - Authentication credentials
+ * - URL parameters containing signatures (SAS tokens)
+ *
+ * Note that masking only affects future logs; any previous appearances of the
+ * secret in logs before calling this function will remain unmasked.
+ *
+ * @example
+ * ```typescript
+ * // Register an API token as a secret
+ * const apiToken = "abc123xyz456";
+ * setSecret(apiToken);
+ *
+ * // Now any logs containing this value will show *** instead
+ * console.log(`Using token: ${apiToken}`); // Outputs: "Using token: ***"
+ * ```
+ */
+function setSecret(secret) {
+    issueCommand('add-mask', {}, secret);
+}
 /**
  * Gets the value of an input.
  * Unless trimWhitespace is set to false in InputOptions, the value is also trimmed.
@@ -27963,6 +28020,27 @@ var ExitCode;
 function getInput(name, options) {
     const val = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`] || '';
     return val.trim();
+}
+/**
+ * Gets the input value of the boolean type in the YAML 1.2 "core schema" specification.
+ * Support boolean input list: `true | True | TRUE | false | False | FALSE` .
+ * The return value is also in boolean type.
+ * ref: https://yaml.org/spec/1.2/spec.html#id2804923
+ *
+ * @param     name     name of the input to get
+ * @param     options  optional. See InputOptions.
+ * @returns   boolean
+ */
+function getBooleanInput(name, options) {
+    const trueValue = ['true', 'True', 'TRUE'];
+    const falseValue = ['false', 'False', 'FALSE'];
+    const val = getInput(name);
+    if (trueValue.includes(val))
+        return true;
+    if (falseValue.includes(val))
+        return false;
+    throw new TypeError(`Input does not meet YAML 1.2 "Core Schema" specification: ${name}\n` +
+        `Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
 }
 /**
  * Sets the value of an output.
@@ -27992,13 +28070,6 @@ function setFailed(message) {
     error(message);
 }
 /**
- * Writes debug message to user log
- * @param message debug message
- */
-function debug(message) {
-    issueCommand('debug', {}, message);
-}
-/**
  * Adds an error issue
  * @param message error issue message. Errors will be converted to string via toString()
  * @param properties optional properties to add to the annotation.
@@ -28006,48 +28077,588 @@ function debug(message) {
 function error(message, properties = {}) {
     issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
-
 /**
- * Waits for a number of milliseconds.
- *
- * @param milliseconds The number of milliseconds to wait.
- * @returns Resolves with 'done!' after the wait is over.
+ * Adds a warning issue
+ * @param message warning issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
  */
-async function wait(milliseconds) {
-    return new Promise((resolve) => {
-        if (isNaN(milliseconds))
-            throw new Error('milliseconds is not a number');
-        setTimeout(() => resolve('done!'), milliseconds);
-    });
+function warning(message, properties = {}) {
+    issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
+/**
+ * Writes info to log with console.log.
+ * @param message info message
+ */
+function info(message) {
+    process.stdout.write(message + os.EOL);
+}
+/**
+ * Begin an output group.
+ *
+ * Output until the next `groupEnd` will be foldable in this group
+ *
+ * @param name The name of the output group
+ */
+function startGroup(name) {
+    issue('group', name);
+}
+/**
+ * End an output group.
+ */
+function endGroup() {
+    issue('endgroup');
+}
+//-----------------------------------------------------------------------
+// Wrapper action state
+//-----------------------------------------------------------------------
+/**
+ * Saves state for current action, the state can only be retrieved by this action's post job execution.
+ *
+ * @param     name     name of the state to store
+ * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function saveState(name, value) {
+    const filePath = process.env['GITHUB_STATE'] || '';
+    if (filePath) {
+        return issueFileCommand('STATE', prepareKeyValueMessage(name, value));
+    }
+    issueCommand('save-state', { name }, toCommandValue(value));
 }
 
-/**
- * The main function for the action.
- *
- * @returns Resolves when the action is complete.
- */
-async function run() {
+const NIC_REPO = 'nebari-dev/nebari-infrastructure-core';
+/** Run a command with output streamed to the job log; throws on failure. */
+function run$1(cmd, args, opts = {}) {
+    info(`$ ${cmd} ${args.join(' ')}`);
+    const res = spawnSync(cmd, args, { stdio: 'inherit', ...opts });
+    if (res.error)
+        throw new Error(`failed to start ${cmd}: ${res.error.message}`);
+    if (res.status !== 0)
+        throw new Error(`${cmd} exited with status ${res.status}`);
+}
+/** Run a command and return its stdout; throws on failure. */
+function capture(cmd, args, opts = {}) {
+    const res = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
+    if (res.error)
+        throw new Error(`failed to start ${cmd}: ${res.error.message}`);
+    if (res.status !== 0) {
+        throw new Error(`${cmd} exited with status ${res.status}: ${(res.stderr || '').toString().trim()}`);
+    }
+    return res.stdout.toString();
+}
+function sleep(seconds) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
+}
+function isExecutable(p) {
     try {
-        const ms = getInput('milliseconds');
-        // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-        debug(`Waiting ${ms} milliseconds ...`);
-        // Log the current timestamp, wait, then log the new timestamp
-        debug(new Date().toTimeString());
-        await wait(parseInt(ms, 10));
-        debug(new Date().toTimeString());
-        // Set outputs for other workflow steps to use
-        setOutput('time', new Date().toTimeString());
+        fs$1.accessSync(p, fs$1.constants.X_OK);
+        return fs$1.statSync(p).isFile();
     }
-    catch (error) {
-        // Fail the workflow run if an error occurs
-        if (error instanceof Error)
-            setFailed(error.message);
+    catch {
+        return false;
+    }
+}
+function curl(url, dest, token) {
+    const args = ['-fsSL', '-H', `Authorization: Bearer ${token}`, url];
+    if (dest)
+        args.push('-o', dest);
+    return capture('curl', args);
+}
+// Map the runner to a release-archive name, rejecting combinations that have
+// no matching asset (or a .zip one, i.e. windows): a wrong guess here either
+// 404s or, worse, downloads an x86_64 tarball that passes the checksum and
+// then fails cryptically at exec.
+function releaseArchName() {
+    const os = process.platform;
+    if (os !== 'linux' && os !== 'darwin') {
+        throw new Error(`no release archive for platform '${os}'; use nic-binary with a prebuilt binary instead`);
+    }
+    const arch = { arm64: 'arm64', x64: 'x86_64' }[process.arch];
+    if (!arch) {
+        throw new Error(`no release archive for architecture '${process.arch}'; use nic-binary with a prebuilt binary instead`);
+    }
+    return `${os}_${arch}`;
+}
+// First release that ships a build-provenance attestation. Earlier tags
+// cannot have their authenticity verified and are refused rather than
+// silently downgraded to checksum-only verification.
+const MIN_ATTESTED_VERSION = 'v0.10.0';
+// Compare semver triples, ignoring prerelease suffixes.
+function semverBelow(a, b) {
+    const parse = (v) => v.replace(/^v/, '').split('-')[0].split('.').map(Number);
+    const pa = parse(a);
+    const pb = parse(b);
+    for (let i = 0; i < 3; i++) {
+        if ((pa[i] ?? 0) !== (pb[i] ?? 0))
+            return (pa[i] ?? 0) < (pb[i] ?? 0);
+    }
+    return false;
+}
+// Download a release tarball, verify its build-provenance attestation and
+// its entry in the release's checksums.txt, and extract the nic binary into
+// destDir.
+function downloadRelease(tag, token, destDir) {
+    if (semverBelow(tag, MIN_ATTESTED_VERSION)) {
+        throw new Error(`nic ${tag} predates build-provenance attestations (first attested ` +
+            `release: ${MIN_ATTESTED_VERSION}), so its authenticity cannot be ` +
+            'verified. Use a newer release, or nic-binary with a binary you ' +
+            'verified yourself.');
+    }
+    const version = tag.replace(/^v/, '');
+    const tarball = `nebari-infrastructure-core_${version}_${releaseArchName()}.tar.gz`;
+    const base = `https://github.com/${NIC_REPO}/releases/download/${tag}`;
+    const tarPath = path.join(destDir, tarball);
+    info(`Downloading ${tarball}`);
+    curl(`${base}/${tarball}`, tarPath, token);
+    // The checksum below only proves the tarball matches checksums.txt, which
+    // travels with it. Provenance proves the release workflow of this repo
+    // built it. The attestation lives in GitHub's store, so a tampered asset
+    // cannot bring its own proof. gh ships preinstalled on GitHub-hosted
+    // runners.
+    info('Verifying build provenance');
+    try {
+        // --signer-workflow pins the attestation to the release workflow
+        run$1('gh', [
+            'attestation',
+            'verify',
+            tarPath,
+            '--repo',
+            NIC_REPO,
+            '--signer-workflow',
+            `${NIC_REPO}/.github/workflows/release.yml`
+        ], {
+            env: { ...process.env, GH_TOKEN: token }
+        });
+    }
+    catch (err) {
+        throw new Error(`build provenance verification failed for ${tarball}: ` +
+            `${err instanceof Error ? err.message : String(err)}. ` +
+            'This requires the GitHub CLI (preinstalled on GitHub-hosted runners) ' +
+            'and a token able to read attestations on the repository.', { cause: err });
+    }
+    const checksums = curl(`${base}/checksums.txt`, null, token);
+    const entry = checksums.split('\n').find((l) => l.trim().endsWith(tarball));
+    const expected = entry ? entry.trim().split(/\s+/)[0] : '';
+    const actual = crypto$1
+        .createHash('sha256')
+        .update(fs$1.readFileSync(tarPath))
+        .digest('hex');
+    if (!expected || expected !== actual) {
+        throw new Error(`checksum mismatch for ${tarball} (expected: ${expected || '<missing from checksums.txt>'}, actual: ${actual})`);
+    }
+    info(`checksum verified (${actual})`);
+    run$1('tar', ['-xzf', tarPath, '-C', destDir]);
+    const bin = path.join(destDir, 'nic');
+    if (!isExecutable(bin)) {
+        throw new Error(`no nic binary found at archive root of ${tarball}`);
+    }
+    return bin;
+}
+// Fetch a git ref of the NIC repo and build nic from source. Uses
+// init+fetch+checkout FETCH_HEAD so branches, tags, and commit SHAs all work
+// with a depth-1 fetch.
+function buildFromRef(ref, destDir) {
+    if (spawnSync('go', ['version']).status !== 0) {
+        throw new Error(`nic-version=${ref} requires a source build, but Go is not installed. ` +
+            'Add actions/setup-go to your workflow before this action, or use a release tag instead.');
+    }
+    const src = path.join(process.env.RUNNER_TEMP || '/tmp', 'nic-src');
+    fs$1.rmSync(src, { recursive: true, force: true });
+    fs$1.mkdirSync(src, { recursive: true });
+    run$1('git', ['-C', src, 'init', '-q']);
+    run$1('git', [
+        '-C',
+        src,
+        'remote',
+        'add',
+        'origin',
+        `https://github.com/${NIC_REPO}.git`
+    ]);
+    run$1('git', ['-C', src, 'fetch', '-q', '--depth', '1', 'origin', ref]);
+    run$1('git', ['-C', src, 'checkout', '-q', 'FETCH_HEAD']);
+    info(`Building nic from ${NIC_REPO}@${ref}`);
+    const bin = path.join(destDir, 'nic');
+    run$1('go', ['build', '-trimpath', '-o', bin, './cmd/nic'], {
+        cwd: src,
+        env: { ...process.env, CGO_ENABLED: '0' }
+    });
+    return bin;
+}
+/**
+ * Resolve the nic binary to use from the nic-binary input (a prebuilt
+ * binary) or the nic-version input (a release download or source build).
+ */
+function acquireNic({ binary, version, token }) {
+    // Register the token for log masking ourselves instead of relying on the
+    // caller having passed an already-registered secret.
+    if (token)
+        setSecret(token);
+    if (binary && version) {
+        throw new Error('nic-binary and nic-version are mutually exclusive; set exactly one.');
+    }
+    if (binary) {
+        const bin = path.resolve(binary);
+        if (!isExecutable(bin)) {
+            throw new Error(`nic-binary points to a missing or non-executable file: ${binary}`);
+        }
+        return bin;
+    }
+    if (version) {
+        const destDir = path.join(process.env.RUNNER_TEMP || '/tmp', 'nic-bin');
+        fs$1.mkdirSync(destDir, { recursive: true });
+        let resolved = version;
+        if (resolved === 'latest') {
+            const release = JSON.parse(curl(`https://api.github.com/repos/${NIC_REPO}/releases/latest`, null, token));
+            resolved = release.tag_name;
+            info(`Resolved 'latest' -> ${resolved}`);
+        }
+        if (/^v\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/.test(resolved)) {
+            return downloadRelease(resolved, token, destDir);
+        }
+        return buildFromRef(resolved, destDir);
+    }
+    throw new Error('no nic binary specified. Set nic-binary (a prebuilt binary) or nic-version (a release or git ref to acquire).');
+}
+// Maximum container restarts tolerated in the namespaces the Applications
+// deploy into before the wait fails fast instead of burning the remaining
+// timeout on a crashloop. The namespaces are derived from each Application's
+// destination, so the check tracks the app set instead of a hardcoded list.
+// Overrides are defined for specific namespaces whose components restart
+// legitimately during bootstrap. For example, metallb speakers restart while
+// waiting for the memberlist Secret, keycloak while its database comes up.
+const DEFAULT_RESTART_BUDGET = 3;
+const RESTART_BUDGET_OVERRIDES = {
+    keycloak: 5,
+    'metallb-system': 10
+};
+// List container statuses (init containers included) for pods in the given
+// namespaces. Skips pods that already finished (Succeeded/Failed) and pods
+// owned by Jobs: Job retries increment restart counts by design, and Argo
+// reports failed hooks through Application health. Transient kubectl
+// failures return null: this check must never be the thing that fails an
+// otherwise converging wait.
+function listWatchedContainers(namespaces, env) {
+    const res = spawnSync('kubectl', ['get', 'pods', '-A', '-o', 'json'], {
+        encoding: 'utf8',
+        env,
+        maxBuffer: 64 * 1024 * 1024
+    });
+    if (res.status !== 0 || !res.stdout)
+        return null;
+    let pods;
+    try {
+        pods = JSON.parse(res.stdout.toString());
+    }
+    catch {
+        return null;
+    }
+    const out = [];
+    for (const pod of pods.items) {
+        if (!namespaces.has(pod.metadata.namespace))
+            continue;
+        if (pod.status?.phase === 'Succeeded' || pod.status?.phase === 'Failed') {
+            continue;
+        }
+        if (pod.metadata.ownerReferences?.some((r) => r.kind === 'Job'))
+            continue;
+        const statuses = [
+            ...(pod.status?.containerStatuses ?? []),
+            ...(pod.status?.initContainerStatuses ?? [])
+        ];
+        for (const cs of statuses) {
+            out.push({
+                namespace: pod.metadata.namespace,
+                pod: pod.metadata.name,
+                container: cs.name ?? '',
+                restarts: cs.restartCount ?? 0,
+                crashLooping: cs.state?.waiting?.reason === 'CrashLoopBackOff'
+            });
+        }
+    }
+    return out;
+}
+// Dump the cluster state that is actually useful when a deploy fails to
+// converge: Application statuses, pods, and Warning events in time order.
+function dumpDiagnostics(env) {
+    startGroup('kubectl get applications -o wide');
+    spawnSync('kubectl', ['get', 'applications.argoproj.io', '-n', 'argocd', '-o', 'wide'], { stdio: 'inherit', env });
+    endGroup();
+    startGroup('kubectl get pods -A');
+    spawnSync('kubectl', ['get', 'pods', '-A'], { stdio: 'inherit', env });
+    endGroup();
+    startGroup('Warning events (oldest first)');
+    spawnSync('kubectl', [
+        'get',
+        'events',
+        '-A',
+        '--field-selector',
+        'type=Warning',
+        '--sort-by',
+        '.lastTimestamp'
+    ], { stdio: 'inherit', env });
+    endGroup();
+}
+// Number of consecutive polls the fully converged state must hold before the
+// wait succeeds. Argo health is momentary: an Application mid-sync can read
+// Healthy before its later-wave resources exist, so a single all-green
+// snapshot is not trusted.
+const REQUIRED_STABLE_POLLS = 3;
+/**
+ * Poll Argo CD Applications until the deployment has converged: nebari-root
+ * is Synced (so every child Application manifest in apps/ has been applied),
+ * every Application is Healthy, and that state holds for
+ * REQUIRED_STABLE_POLLS consecutive polls with an unchanged Application set.
+ * Dumps diagnostics and throws when the timeout elapses, or when a container
+ * is in CrashLoopBackOff having exceeded its restart budget during the wait,
+ * before convergence.
+ *
+ * TODO(nebari-infrastructure-core#484, #513): gate on Synced for every
+ * Application once gateway-config listener co-ownership (#484) and
+ * Server-Side Diff adoption (#513) are fixed; until then
+ * Healthy-but-OutOfSync Applications only produce a warning.
+ */
+function waitForApplications(kubeconfig, timeoutSeconds) {
+    const env = { ...process.env, KUBECONFIG: kubeconfig };
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    let stablePolls = 0;
+    let prevNames = '';
+    let warnedPollFailure = false;
+    // restartCount is a lifetime counter, so budgets are measured against a
+    // baseline captured on the first poll: restarts that predate the wait
+    // (bootstrap flaps that already resolved) never count against it.
+    // Containers first seen on later polls baseline at 0, because their whole
+    // life happened during the wait.
+    let restartBaseline = null;
+    for (;;) {
+        let apps = [];
+        const res = spawnSync('kubectl', [
+            'get',
+            'applications.argoproj.io',
+            '-n',
+            'argocd',
+            '-o',
+            'jsonpath={range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{" "}{.spec.destination.namespace}{"\\n"}{end}'
+        ], { encoding: 'utf8', env });
+        if (res.status === 0) {
+            apps = res.stdout
+                .toString()
+                .split('\n')
+                .filter(Boolean)
+                .map((line) => {
+                const [name, sync, health, namespace] = line.split(' ');
+                return {
+                    name,
+                    sync: sync || 'Unknown',
+                    health: health || 'Unknown',
+                    namespace: namespace || ''
+                };
+            });
+        }
+        else {
+            // Surface the first failure loudly: a bad kubeconfig or unreachable API
+            // server would otherwise be indistinguishable from "no apps yet" until
+            // the timeout. Transient blips during bootstrap are normal, so keep
+            // retrying rather than failing.
+            const msg = res.error?.message ||
+                (res.stderr || '').toString().trim() ||
+                `exit status ${res.status}`;
+            if (warnedPollFailure) {
+                info(`kubectl get applications failed again: ${msg}`);
+            }
+            else {
+                warnedPollFailure = true;
+                warning(`kubectl get applications failed: ${msg}. Retrying until the ` +
+                    'timeout; if this persists, the kubeconfig or API server is the problem.');
+            }
+        }
+        const notReady = apps.filter((a) => a.health !== 'Healthy');
+        const root = apps.find((a) => a.name === 'nebari-root');
+        // nebari-root Synced means every child Application manifest in apps/ has
+        // been applied; without it an early poll can see only the root app (Argo
+        // excludes children from parent health) and pass vacuously.
+        const converged = apps.length > 0 &&
+            notReady.length === 0 &&
+            root !== undefined &&
+            root.sync === 'Synced';
+        // A component crashlooping through its restart budget fails the wait
+        // immediately: waiting out the timeout adds no information, and
+        // Application health alone can miss a component that reports Healthy
+        // between restarts. argocd is always watched; the rest of the namespaces
+        // come from the Applications' destinations. Failing requires both budget
+        // exhaustion during this wait and CrashLoopBackOff right now, so a
+        // component that flapped mid-wait and recovered only produces a warning
+        // at success.
+        const namespaces = new Set(['argocd', ...apps.map((a) => a.namespace)].filter(Boolean));
+        const containers = listWatchedContainers(namespaces, env);
+        const restartedDuringWait = [];
+        let breach = null;
+        if (containers) {
+            if (restartBaseline === null) {
+                restartBaseline = new Map(containers.map((c) => [
+                    `${c.namespace}/${c.pod}/${c.container}`,
+                    c.restarts
+                ]));
+            }
+            for (const c of containers) {
+                const delta = c.restarts -
+                    (restartBaseline.get(`${c.namespace}/${c.pod}/${c.container}`) ?? 0);
+                if (delta <= 0)
+                    continue;
+                const budget = RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET;
+                const entry = { ...c, delta, budget };
+                restartedDuringWait.push(entry);
+                if (breach === null && delta > budget && c.crashLooping) {
+                    breach = entry;
+                }
+            }
+        }
+        if (breach && !converged) {
+            startGroup(`Previous logs: ${breach.namespace}/${breach.pod}/${breach.container}`);
+            spawnSync('kubectl', [
+                'logs',
+                '--previous',
+                '--tail=50',
+                '-c',
+                breach.container,
+                '-n',
+                breach.namespace,
+                breach.pod
+            ], { stdio: 'inherit', env });
+            endGroup();
+            dumpDiagnostics(env);
+            throw new Error(`container ${breach.namespace}/${breach.pod}/${breach.container} is in ` +
+                `CrashLoopBackOff after ${breach.delta} restarts during the wait ` +
+                `(budget for ${breach.namespace}: ${breach.budget}); giving up on the wait`);
+        }
+        const names = apps
+            .map((a) => a.name)
+            .sort()
+            .join(',');
+        if (converged && names === prevNames) {
+            stablePolls++;
+        }
+        else {
+            stablePolls = converged ? 1 : 0;
+        }
+        prevNames = names;
+        if (stablePolls >= REQUIRED_STABLE_POLLS) {
+            if (restartedDuringWait.length > 0) {
+                warning('Containers restarted during the wait but the deployment converged: ' +
+                    restartedDuringWait
+                        .map((c) => `${c.namespace}/${c.pod}/${c.container} (${c.delta})`)
+                        .join(', '));
+            }
+            info(`All ${apps.length} Applications are Healthy and nebari-root is Synced`);
+            const outOfSync = apps.filter((a) => a.sync !== 'Synced');
+            if (outOfSync.length > 0) {
+                warning(`${outOfSync.length} Application(s) are Healthy but not Synced: ` +
+                    outOfSync.map((a) => `${a.name} (${a.sync})`).join(', '));
+            }
+            return;
+        }
+        if (Date.now() >= deadline) {
+            startGroup('Applications not converged');
+            if (apps.length === 0) {
+                info('<no Applications found>');
+            }
+            else {
+                if (root === undefined) {
+                    info('nebari-root: <not found>');
+                }
+                else if (root.sync !== 'Synced') {
+                    info(`nebari-root: sync=${root.sync} (must be Synced)`);
+                }
+                for (const a of notReady)
+                    info(`${a.name}: sync=${a.sync} health=${a.health}`);
+            }
+            endGroup();
+            dumpDiagnostics(env);
+            throw new Error(`Applications did not converge within ${timeoutSeconds}s`);
+        }
+        sleep(10);
+    }
+}
+
+// Resolve the config file. It is either the one passed by the consumer or
+// the built-in default that ships with the action (a local kind cluster with
+// an auto-created gitops repo).
+function resolveConfig() {
+    const input = getInput('config');
+    if (input)
+        return path.resolve(input);
+    // The default config sits at the action root, one level above this module
+    // both in the source tree (src/) and in the bundle (dist/).
+    const defaultConfig = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'default-config.yaml');
+    if (!fs$1.existsSync(defaultConfig)) {
+        throw new Error(`built-in default config not found at ${defaultConfig}; set the config input`);
+    }
+    info(`No config provided. Using the built-in default local config (${defaultConfig})`);
+    return defaultConfig;
+}
+function deploy() {
+    const config = resolveConfig();
+    const nic = acquireNic({
+        binary: getInput('nic-binary'),
+        version: getInput('nic-version'),
+        token: getInput('token')
+    });
+    run$1(nic, ['version']);
+    setOutput('nic-binary', nic);
+    // Save teardown state before deploying so the post step can destroy a
+    // partially created deployment even when `nic deploy` fails mid-way.
+    saveState('nicBinary', nic);
+    saveState('config', config);
+    // getBooleanInput throws on malformed values. Validate here, before the
+    // deploy: destroy is the input that leaks infrastructure when misread, so
+    // it must fail closed. The post step then only ever sees normalized values.
+    saveState('destroy', getBooleanInput('destroy') ? 'true' : 'false');
+    saveState('force', getBooleanInput('force') ? 'true' : 'false');
+    saveState('deployStarted', 'true');
+    // Validate the wait inputs before deploying too: a malformed wait-timeout
+    // should cost seconds, not a completed cloud deploy. Strict parse:
+    // `parseInt(...) || 600` would turn an explicit 0 into 600, truncate
+    // '300s' to 300, and accept negatives.
+    const wait = getBooleanInput('wait');
+    const rawTimeout = getInput('wait-timeout');
+    if (wait && (!/^[0-9]+$/.test(rawTimeout) || parseInt(rawTimeout, 10) <= 0)) {
+        throw new Error(`wait-timeout must be a positive integer number of seconds, got '${rawTimeout}'. ` +
+            'Set wait: false to skip waiting.');
+    }
+    const waitTimeout = parseInt(rawTimeout, 10);
+    // endGroup in finally: exec() throws on failure, and a failed deploy's
+    // output is exactly what must not end up inside a collapsed group.
+    startGroup('nic deploy');
+    try {
+        run$1(nic, ['deploy', '-f', config]);
+    }
+    finally {
+        endGroup();
+    }
+    const kubeconfig = path.join(process.env.RUNNER_TEMP || '/tmp', `nic-kubeconfig-${process.env.GITHUB_ACTION || 'deploy'}`);
+    run$1(nic, ['kubeconfig', '-f', config, '-o', kubeconfig]);
+    exportVariable('KUBECONFIG', kubeconfig);
+    setOutput('kubeconfig', kubeconfig);
+    if (wait) {
+        info(`Waiting up to ${waitTimeout}s for Argo CD Applications to converge`);
+        waitForApplications(kubeconfig, waitTimeout);
+    }
+}
+/**
+ * The main step of the action: acquire nic, deploy, export KUBECONFIG, and
+ * optionally wait for the deployment to converge.
+ */
+function run() {
+    try {
+        deploy();
+    }
+    catch (err) {
+        setFailed(err instanceof Error ? err.message : String(err));
     }
 }
 
 /**
- * The entrypoint for the action. This file simply imports and runs the action's
- * main logic.
+ * The entrypoint for the action's main step. This file simply imports and
+ * runs the action's main logic.
  */
 /* istanbul ignore next */
 run();
