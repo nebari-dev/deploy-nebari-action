@@ -36,6 +36,15 @@ jobs:
         id: npm-format-check
         run: npm run format:check
 
+      # Regenerate the README's inputs/outputs tables from action.yml and
+      # fail when the committed README is out of date (run `npm run bundle`).
+      - name: Check Docs
+        id: npm-docs-check
+        run: |
+          npm run docs
+          npx prettier --write README.md
+          git diff --exit-code README.md
+
       - name: Lint
         id: npm-lint
         run: npm run lint
@@ -47,18 +56,24 @@ jobs:
   test-action:
     name: GitHub Actions Test
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         id: checkout
         uses: actions/checkout@v6
 
+      # Deploys the built-in default config (a local kind cluster with the
+      # full platform) using the latest nic release, and destroys it in the
+      # action's post step.
       - name: Test Local Action
         id: test-action
         uses: ./
         with:
-          milliseconds: 2000
+          nic-version: latest
 
-      - name: Print Output
+      - name: Check cluster
         id: output
-        run: echo "${{ steps.test-action.outputs.time }}"
+        run: |
+          echo "kubeconfig: ${{ steps.test-action.outputs.kubeconfig }}"
+          kubectl get pods -A
