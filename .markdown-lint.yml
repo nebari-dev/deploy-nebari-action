@@ -4,9 +4,16 @@
 MD004:
   style: dash
 
-# Disable line length for tables
-MD013:
-  tables: false
+# Disable line length checks: paragraphs are kept on a single line, and the
+# inputs/outputs tables are generated from action.yml by action-docs
+MD013: false
+
+# Allow the inline HTML action-docs emits inside generated table cells
+MD033:
+  allowed_elements:
+    - p
+    - ul
+    - li
 
 # Ordered list item prefix
 MD029:
