@@ -10,7 +10,7 @@ This action deploys a Nebari platform from a config file using the [`nic` CLI](h
 
 Specifically, the action:
 
-- Acquires `nic` from a prebuilt binary (`nic-binary`) or from a release or git ref (`nic-version`), verifying release downloads against their checksums and build provenance attestations (release tags must be v0.10.0 or newer because earlier releases have no attestation and are thus refused).
+- Acquires `nic` from a prebuilt binary (`nic-binary`) or from a release or Git ref (`nic-version`), verifying release downloads against their checksums and build provenance attestations (release tags must be v0.10.0 or newer because earlier releases have no attestation and are thus refused).
 - Runs `nic deploy` with your config (or a built-in local kind default).
 - Exports `KUBECONFIG` so every later step in the job runs against the deployed cluster.
 - Waits for the deployment to converge: nebari-root Synced, every Argo CD Application Healthy, and that state stable across consecutive polls.
@@ -41,9 +41,9 @@ jobs:
 
 | name           | description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | required | default               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------- |
-| `config`       | <p>Path to the NIC config file, relative to the workspace. When unset, the action deploys its built-in default: a local kind cluster with an auto-created local gitops repository (see default-config.yaml in the action repository). Copy it into your repo as a starting point for a custom config.</p>                                                                                                                                                                                                                                    | `false`  | `""`                  |
+| `config`       | <p>Path to the NIC config file, relative to the workspace. When unset, the action deploys its built-in default: a local kind cluster with an auto-created local gitops repository (see default-config.yaml in the action repository). Copy it into your repository as a starting point for a custom config.</p>                                                                                                                                                                                                                              | `false`  | `""`                  |
 | `nic-binary`   | <p>Path to a local prebuilt nic binary. Set exactly one of nic-binary and nic-version.</p>                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `false`  | `""`                  |
-| `nic-version`  | <p>NIC version to acquire. Mutually exclusive with nic-binary.</p> <ul> <li>'latest': download the latest release binary (checksum- and provenance-verified).</li> <li>'vX.Y.Z': download that release binary (checksum- and provenance-verified). Must be v0.10.0 or newer; earlier releases have no provenance attestation and are refused.</li> <li>any other string: fetch that git ref (branch, tag, or commit SHA) of nebari-dev/nebari-infrastructure-core and build from source (requires Go, e.g. via actions/setup-go).</li> </ul> | `false`  | `""`                  |
+| `nic-version`  | <p>NIC version to acquire. Mutually exclusive with nic-binary.</p> <ul> <li>'latest': download the latest release binary (checksum- and provenance-verified).</li> <li>'vX.Y.Z': download that release binary (checksum- and provenance-verified). Must be v0.10.0 or newer; earlier releases have no provenance attestation and are refused.</li> <li>any other string: fetch that Git ref (branch, tag, or commit SHA) of nebari-dev/nebari-infrastructure-core and build from source (requires Go, e.g. via actions/setup-go).</li> </ul> | `false`  | `""`                  |
 | `wait`         | <p>Wait for the deployment to converge after deploy (nebari-root Synced, all Argo CD Applications Healthy, stable across consecutive polls).</p>                                                                                                                                                                                                                                                                                                                                                                                             | `false`  | `true`                |
 | `wait-timeout` | <p>Seconds to wait for Applications to converge.</p>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `false`  | `600`                 |
 | `destroy`      | <p>Destroy the deployment in the post step when the job ends.</p>                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `false`  | `true`                |
@@ -67,7 +67,7 @@ jobs:
 
 ### Custom config
 
-Copy [`default-config.yaml`](default-config.yaml) into your repo as a starting point, edit it, and pass it via the `config` input:
+Copy [`default-config.yaml`](default-config.yaml) into your repository as a starting point, edit it, and pass it via the `config` input:
 
 ```yaml
 - uses: nebari-dev/deploy-nebari-action@main
@@ -94,9 +94,9 @@ When a previous job already built `nic` (for example from the PR under test), pa
     nic-binary: nic
 ```
 
-### Source build from a git ref
+### Source build from a Git ref
 
-Any `nic-version` that is not `latest` or a release tag is treated as a git ref of nebari-infrastructure-core and built from source, which requires Go:
+Any `nic-version` that is not `latest` or a release tag is treated as a Git ref of nebari-infrastructure-core and built from source, which requires Go:
 
 ```yaml
 - uses: actions/setup-go@v6

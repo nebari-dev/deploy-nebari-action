@@ -2,7 +2,7 @@ name: Deploy Nebari
 description: >-
   Deploy a Nebari platform from a config file using the nic CLI, and destroy it
   automatically when the job ends (post step), even on failure or cancellation.
-  Acquires nic from a prebuilt binary (nic-binary) or a release or git ref
+  Acquires nic from a prebuilt binary (nic-binary) or a release or Git ref
   (nic-version). Exports KUBECONFIG so the steps after this action run against
   the deployed cluster, and by default waits for the deployment to converge:
   nebari-root Synced, every Argo CD Application Healthy, and that state stable
@@ -18,8 +18,8 @@ inputs:
       Path to the NIC config file, relative to the workspace. When unset, the
       action deploys its built-in default: a local kind cluster with an
       auto-created local gitops repository (see default-config.yaml in the
-      action repository). Copy it into your repo as a starting point for a
-      custom config.
+      action repository). Copy it into your repository as a starting point for
+      a custom config.
     required: false
     default: ''
   nic-binary:
@@ -36,7 +36,7 @@ inputs:
         - 'vX.Y.Z': download that release binary (checksum- and
           provenance-verified). Must be v0.10.0 or newer; earlier releases
           have no provenance attestation and are refused.
-        - any other string: fetch that git ref (branch, tag, or commit SHA)
+        - any other string: fetch that Git ref (branch, tag, or commit SHA)
           of nebari-dev/nebari-infrastructure-core and build from source
           (requires Go, e.g. via actions/setup-go).
     required: false
