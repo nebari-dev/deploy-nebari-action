@@ -55,7 +55,7 @@ inputs:
     description: >-
       Comma-separated namespace=count pairs overriding the per-namespace
       container restart budgets the wait uses to fail fast on crashloops
-      (e.g. 'keycloak=12,cnpg-system=8'). Use '*=count' to override the
+      (e.g. 'keycloak=12,cnpg-system=8'). Use `*=count` to override the
       budget for namespaces without a specific override. Only used when wait
       is true.
     required: false
