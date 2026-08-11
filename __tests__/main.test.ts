@@ -122,7 +122,49 @@ describe('main.ts', () => {
     run()
 
     expect(core.setFailed).not.toHaveBeenCalled()
-    expect(nic.waitForApplications).toHaveBeenCalledWith(kubeconfig, 900)
+    expect(nic.waitForApplications).toHaveBeenCalledWith(kubeconfig, 900, {})
+  })
+
+  it('passes parsed restart-budgets through to the wait', () => {
+    setInputs(
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'restart-budgets': 'keycloak=12, cnpg-system=8 ,*=5'
+      },
+      { wait: true, destroy: true, force: true }
+    )
+
+    run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(nic.waitForApplications).toHaveBeenCalledWith(kubeconfig, 900, {
+      keycloak: 12,
+      'cnpg-system': 8,
+      '*': 5
+    })
+  })
+
+  it('rejects malformed restart-budgets before deploying', () => {
+    setInputs(
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'restart-budgets': 'keycloak=lots'
+      },
+      { wait: true, destroy: true, force: true }
+    )
+
+    run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringMatching(/restart-budgets entries must be/)
+    )
+    expect(nic.run).not.toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.arrayContaining(['deploy'])
+    )
+    expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
   })
 
   it('skips the wait when wait is false', () => {

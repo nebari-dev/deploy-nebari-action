@@ -28732,11 +28732,17 @@ function acquireNic({ binary, version, token }) {
 // destination, so the check tracks the app set instead of a hardcoded list.
 // Overrides are defined for specific namespaces whose components restart
 // legitimately during bootstrap. For example, metallb speakers restart while
-// waiting for the memberlist Secret, keycloak while its database comes up.
+// waiting for the memberlist Secret, keycloak while it waits for its
+// CloudNativePG database (8 is the value the sandbox action converged on
+// after real slow-boot flakes at lower budgets), and the CNPG operator and
+// cluster pods while Postgres bootstraps. Consumers can override any of
+// these via the restart-budgets input without waiting for an action release.
 const DEFAULT_RESTART_BUDGET = 3;
 const RESTART_BUDGET_OVERRIDES = {
-    keycloak: 5,
-    'metallb-system': 10
+    keycloak: 8,
+    'metallb-system': 10,
+    'cnpg-system': 6,
+    'cloudnative-pg': 6
 };
 // List container statuses (init containers included) for pods in the given
 // namespaces. Skips pods that already finished (Succeeded/Failed) and pods
@@ -28825,7 +28831,12 @@ const REQUIRED_STABLE_POLLS = 3;
  * Server-Side Diff adoption (#513) are fixed; until then
  * Healthy-but-OutOfSync Applications only produce a warning.
  */
-function waitForApplications(kubeconfig, timeoutSeconds) {
+function waitForApplications(kubeconfig, timeoutSeconds, 
+// Per-namespace budget overrides from the restart-budgets input. An
+// explicit namespace beats the built-in overrides; '*' replaces the
+// default budget for namespaces without a specific override ('*' rather
+// than 'default' because default is a real Kubernetes namespace).
+restartBudgets = {}) {
     const env = { ...process.env, KUBECONFIG: kubeconfig };
     const deadline = Date.now() + timeoutSeconds * 1000;
     let stablePolls = 0;
@@ -28915,7 +28926,10 @@ function waitForApplications(kubeconfig, timeoutSeconds) {
                 const delta = c.restarts - (restartBaseline.get(`${c.uid}/${c.container}`) ?? 0);
                 if (delta <= 0)
                     continue;
-                const budget = RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET;
+                const budget = restartBudgets[c.namespace] ??
+                    RESTART_BUDGET_OVERRIDES[c.namespace] ??
+                    restartBudgets['*'] ??
+                    DEFAULT_RESTART_BUDGET;
                 const entry = { ...c, delta, budget };
                 const seen = restartedDuringWait.get(key);
                 if (!seen || delta > seen.delta) {
@@ -29009,6 +29023,24 @@ function resolveConfig() {
     info(`No config provided. Using the built-in default local config (${defaultConfig})`);
     return defaultConfig;
 }
+// Parse the restart-budgets input: comma-separated namespace=count pairs,
+// with '*' overriding the budget for namespaces that have no specific
+// override. Strict parse for the same reason as wait-timeout: a malformed
+// entry must fail before the deploy, not be silently dropped.
+function parseRestartBudgets(raw) {
+    const budgets = {};
+    if (!raw.trim())
+        return budgets;
+    for (const entry of raw.split(',')) {
+        const match = /^\s*(\*|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)=([0-9]+)\s*$/.exec(entry);
+        if (!match) {
+            throw new Error(`restart-budgets entries must be namespace=count pairs (or *=count), ` +
+                `got '${entry.trim()}'`);
+        }
+        budgets[match[1]] = parseInt(match[2], 10);
+    }
+    return budgets;
+}
 function deploy() {
     const config = resolveConfig();
     const nic = acquireNic({
@@ -29038,6 +29070,9 @@ function deploy() {
             'Set wait: false to skip waiting.');
     }
     const waitTimeout = parseInt(rawTimeout, 10);
+    const restartBudgets = wait
+        ? parseRestartBudgets(getInput('restart-budgets'))
+        : {};
     // Only mark the deploy as started once every input has validated: the post
     // step destroys whenever it sees this flag, and a run that failed on input
     // validation has nothing to destroy.
@@ -29057,7 +29092,7 @@ function deploy() {
     setOutput('kubeconfig', kubeconfig);
     if (wait) {
         info(`Waiting up to ${waitTimeout}s for Argo CD Applications to converge`);
-        waitForApplications(kubeconfig, waitTimeout);
+        waitForApplications(kubeconfig, waitTimeout, restartBudgets);
     }
 }
 /**

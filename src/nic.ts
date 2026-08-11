@@ -277,11 +277,17 @@ interface AppStatus {
 // destination, so the check tracks the app set instead of a hardcoded list.
 // Overrides are defined for specific namespaces whose components restart
 // legitimately during bootstrap. For example, metallb speakers restart while
-// waiting for the memberlist Secret, keycloak while its database comes up.
+// waiting for the memberlist Secret, keycloak while it waits for its
+// CloudNativePG database (8 is the value the sandbox action converged on
+// after real slow-boot flakes at lower budgets), and the CNPG operator and
+// cluster pods while Postgres bootstraps. Consumers can override any of
+// these via the restart-budgets input without waiting for an action release.
 const DEFAULT_RESTART_BUDGET = 3
 const RESTART_BUDGET_OVERRIDES: Record<string, number> = {
-  keycloak: 5,
-  'metallb-system': 10
+  keycloak: 8,
+  'metallb-system': 10,
+  'cnpg-system': 6,
+  'cloudnative-pg': 6
 }
 
 interface WatchedContainer {
@@ -421,7 +427,12 @@ const REQUIRED_STABLE_POLLS = 3
  */
 export function waitForApplications(
   kubeconfig: string,
-  timeoutSeconds: number
+  timeoutSeconds: number,
+  // Per-namespace budget overrides from the restart-budgets input. An
+  // explicit namespace beats the built-in overrides; '*' replaces the
+  // default budget for namespaces without a specific override ('*' rather
+  // than 'default' because default is a real Kubernetes namespace).
+  restartBudgets: Record<string, number> = {}
 ): void {
   const env = { ...process.env, KUBECONFIG: kubeconfig }
   const deadline = Date.now() + timeoutSeconds * 1000
@@ -526,7 +537,10 @@ export function waitForApplications(
           c.restarts - (restartBaseline.get(`${c.uid}/${c.container}`) ?? 0)
         if (delta <= 0) continue
         const budget =
-          RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET
+          restartBudgets[c.namespace] ??
+          RESTART_BUDGET_OVERRIDES[c.namespace] ??
+          restartBudgets['*'] ??
+          DEFAULT_RESTART_BUDGET
         const entry = { ...c, delta, budget }
         const seen = restartedDuringWait.get(key)
         if (!seen || delta > seen.delta) {
