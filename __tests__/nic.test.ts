@@ -315,6 +315,7 @@ describe('waitForApplications', () => {
   interface PodSpec {
     namespace: string
     name: string
+    uid?: string
     restarts?: number
     crashLooping?: boolean
     phase?: string
@@ -327,6 +328,7 @@ describe('waitForApplications', () => {
         metadata: {
           namespace: p.namespace,
           name: p.name,
+          uid: p.uid ?? `uid-${p.name}`,
           ownerReferences: p.jobOwned ? [{ kind: 'Job' }] : []
         },
         status: {
@@ -515,6 +517,25 @@ describe('waitForApplications', () => {
       expect.stringMatching(
         /restarted during the wait but the deployment converged: argocd\/repo-server\/main \(2\)/
       )
+    )
+  })
+
+  it('counts restarts of a pod replaced under the same name', () => {
+    // The baseline pod has 4 lifetime restarts, then is replaced under the
+    // same name (StatefulSet recreation). The replacement's counter starts
+    // over, so its 4 restarts all happened during the wait; with a
+    // name-keyed baseline they would hide under the dead pod's count.
+    const pod = { namespace: 'argocd', name: 'repo-server' }
+    mockPolls(
+      [ok(progressing)],
+      [
+        podsJson([{ ...pod, uid: 'old', restarts: 4 }]),
+        podsJson([{ ...pod, uid: 'new', restarts: 4, crashLooping: true }])
+      ]
+    )
+
+    expect(() => waitForApplications('kubeconfig', 600)).toThrow(
+      /argocd\/repo-server\/main is in CrashLoopBackOff after 4 restarts/
     )
   })
 
