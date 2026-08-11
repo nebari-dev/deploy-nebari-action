@@ -495,6 +495,29 @@ describe('waitForApplications', () => {
     )
   })
 
+  it('reports a mid-wait flap even when the pod is gone by convergence', () => {
+    // The container restarts twice mid-wait, then its pod disappears from
+    // later polls (replaced, deleted, or garbage-collected). The success
+    // warning must reflect the whole wait, not just the final poll.
+    const pod = { namespace: 'argocd', name: 'repo-server' }
+    mockPolls(
+      [ok(progressing), ok(healthy)],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 2 }]),
+        podsJson([])
+      ]
+    )
+
+    waitForApplications('kubeconfig', 600)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /restarted during the wait but the deployment converged: argocd\/repo-server\/main \(2\)/
+      )
+    )
+  })
+
   it('respects per-namespace restart budget overrides', () => {
     // keycloak's budget is 5: four restarts during the wait, even while
     // crashlooping, must not fail the wait.
