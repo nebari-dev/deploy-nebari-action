@@ -149,5 +149,24 @@ describe('main.ts', () => {
       expect.arrayContaining(['deploy'])
     )
     expect(nic.waitForApplications).not.toHaveBeenCalled()
+    // A deploy that never ran must leave nothing for the post step to
+    // destroy.
+    expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
+  })
+
+  it('does not mark deployStarted when the wait input is malformed', () => {
+    core.getBooleanInput.mockImplementation((name) => {
+      if (name === 'wait') throw new Error('wait is not a boolean')
+      return true
+    })
+
+    run()
+
+    expect(core.setFailed).toHaveBeenCalledWith('wait is not a boolean')
+    expect(nic.run).not.toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.arrayContaining(['deploy'])
+    )
+    expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
   })
 })
