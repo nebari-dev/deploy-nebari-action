@@ -68,7 +68,23 @@ jobs:
 
 ### Custom config
 
-Copy [`default-config.yaml`](default-config.yaml) into your repository as a starting point, edit it, and pass it via the `config` input:
+Copy [`default-config.yaml`](default-config.yaml) into your repository as a starting point, edit it, and pass it via the `config` input.
+
+Note that `nic` requires the config to declare exactly one `repository:` provider. The default config uses the `local` provider, which auto-creates a gitops repository on the runner. To have `nic` push to a remote repository instead, use the `existing` provider and supply credentials through an environment variable. See the [NIC configuration examples](https://github.com/nebari-dev/nebari-infrastructure-core/tree/main/examples).
+
+```yaml
+repository:
+  existing:
+    url: 'git@github.com:my-org/my-gitops-repo.git'
+    branch: main
+    path: 'clusters/my-nebari'
+    auth:
+      ssh:
+        env: GIT_SSH_PRIVATE_KEY
+      # or, for HTTPS:
+      # token:
+      #   env: GIT_TOKEN
+```
 
 ```yaml
 - uses: nebari-dev/deploy-nebari-action@main
