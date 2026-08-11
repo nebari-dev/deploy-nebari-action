@@ -28776,6 +28776,7 @@ function listWatchedContainers(namespaces, env) {
             out.push({
                 namespace: pod.metadata.namespace,
                 pod: pod.metadata.name,
+                uid: pod.metadata.uid ?? '',
                 container: cs.name ?? '',
                 restarts: cs.restartCount ?? 0,
                 crashLooping: cs.state?.waiting?.reason === 'CrashLoopBackOff'
@@ -28834,7 +28835,10 @@ function waitForApplications(kubeconfig, timeoutSeconds) {
     // baseline captured on the first poll: restarts that predate the wait
     // (bootstrap flaps that already resolved) never count against it.
     // Containers first seen on later polls baseline at 0, because their whole
-    // life happened during the wait.
+    // life happened during the wait. The baseline is keyed by pod UID, not
+    // name: a pod replaced under the same name mid-wait (a StatefulSet
+    // recreating keycloak-0) is a new pod whose restarts all happened during
+    // the wait, and must not hide under the dead pod's count.
     let restartBaseline = null;
     // Accumulates the max delta seen per container across the whole wait, so
     // the success-path warning reports a flap even when the container is gone
@@ -28904,14 +28908,11 @@ function waitForApplications(kubeconfig, timeoutSeconds) {
         let breach = null;
         if (containers) {
             if (restartBaseline === null) {
-                restartBaseline = new Map(containers.map((c) => [
-                    `${c.namespace}/${c.pod}/${c.container}`,
-                    c.restarts
-                ]));
+                restartBaseline = new Map(containers.map((c) => [`${c.uid}/${c.container}`, c.restarts]));
             }
             for (const c of containers) {
                 const key = `${c.namespace}/${c.pod}/${c.container}`;
-                const delta = c.restarts - (restartBaseline.get(key) ?? 0);
+                const delta = c.restarts - (restartBaseline.get(`${c.uid}/${c.container}`) ?? 0);
                 if (delta <= 0)
                     continue;
                 const budget = RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET;
