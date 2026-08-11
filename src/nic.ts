@@ -431,6 +431,10 @@ export function waitForApplications(
   // Containers first seen on later polls baseline at 0, because their whole
   // life happened during the wait.
   let restartBaseline: Map<string, number> | null = null
+  // Accumulates the max delta seen per container across the whole wait, so
+  // the success-path warning reports a flap even when the container is gone
+  // from the final poll (pod replaced or deleted mid-wait).
+  const restartedDuringWait = new Map<string, RestartBreach>()
 
   for (;;) {
     let apps: AppStatus[] = []
@@ -503,7 +507,6 @@ export function waitForApplications(
       ['argocd', ...apps.map((a) => a.namespace)].filter(Boolean)
     )
     const containers = listWatchedContainers(namespaces, env)
-    const restartedDuringWait: RestartBreach[] = []
     let breach: RestartBreach | null = null
     if (containers) {
       if (restartBaseline === null) {
@@ -515,14 +518,16 @@ export function waitForApplications(
         )
       }
       for (const c of containers) {
-        const delta =
-          c.restarts -
-          (restartBaseline.get(`${c.namespace}/${c.pod}/${c.container}`) ?? 0)
+        const key = `${c.namespace}/${c.pod}/${c.container}`
+        const delta = c.restarts - (restartBaseline.get(key) ?? 0)
         if (delta <= 0) continue
         const budget =
           RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET
         const entry = { ...c, delta, budget }
-        restartedDuringWait.push(entry)
+        const seen = restartedDuringWait.get(key)
+        if (!seen || delta > seen.delta) {
+          restartedDuringWait.set(key, entry)
+        }
         if (breach === null && delta > budget && c.crashLooping) {
           breach = entry
         }
@@ -567,10 +572,10 @@ export function waitForApplications(
     prevNames = names
 
     if (stablePolls >= REQUIRED_STABLE_POLLS) {
-      if (restartedDuringWait.length > 0) {
+      if (restartedDuringWait.size > 0) {
         core.warning(
           'Containers restarted during the wait but the deployment converged: ' +
-            restartedDuringWait
+            [...restartedDuringWait.values()]
               .map((c) => `${c.namespace}/${c.pod}/${c.container} (${c.delta})`)
               .join(', ')
         )
