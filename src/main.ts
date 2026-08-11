@@ -31,6 +31,28 @@ function resolveConfig(): string {
   return defaultConfig
 }
 
+// Parse the restart-budgets input: comma-separated namespace=count pairs,
+// with '*' overriding the budget for namespaces that have no specific
+// override. Strict parse for the same reason as wait-timeout: a malformed
+// entry must fail before the deploy, not be silently dropped.
+function parseRestartBudgets(raw: string): Record<string, number> {
+  const budgets: Record<string, number> = {}
+  if (!raw.trim()) return budgets
+  for (const entry of raw.split(',')) {
+    const match = /^\s*(\*|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)=([0-9]+)\s*$/.exec(
+      entry
+    )
+    if (!match) {
+      throw new Error(
+        `restart-budgets entries must be namespace=count pairs (or *=count), ` +
+          `got '${entry.trim()}'`
+      )
+    }
+    budgets[match[1]] = parseInt(match[2], 10)
+  }
+  return budgets
+}
+
 function deploy(): void {
   const config = resolveConfig()
 
@@ -51,7 +73,6 @@ function deploy(): void {
   // it must fail closed. The post step then only ever sees normalized values.
   core.saveState('destroy', core.getBooleanInput('destroy') ? 'true' : 'false')
   core.saveState('force', core.getBooleanInput('force') ? 'true' : 'false')
-  core.saveState('deployStarted', 'true')
 
   // Validate the wait inputs before deploying too: a malformed wait-timeout
   // should cost seconds, not a completed cloud deploy. Strict parse:
@@ -66,6 +87,14 @@ function deploy(): void {
     )
   }
   const waitTimeout = parseInt(rawTimeout, 10)
+  const restartBudgets = wait
+    ? parseRestartBudgets(core.getInput('restart-budgets'))
+    : {}
+
+  // Only mark the deploy as started once every input has validated: the post
+  // step destroys whenever it sees this flag, and a run that failed on input
+  // validation has nothing to destroy.
+  core.saveState('deployStarted', 'true')
 
   // endGroup in finally: exec() throws on failure, and a failed deploy's
   // output is exactly what must not end up inside a collapsed group.
@@ -88,7 +117,7 @@ function deploy(): void {
     core.info(
       `Waiting up to ${waitTimeout}s for Argo CD Applications to converge`
     )
-    waitForApplications(kubeconfig, waitTimeout)
+    waitForApplications(kubeconfig, waitTimeout, restartBudgets)
   }
 }
 

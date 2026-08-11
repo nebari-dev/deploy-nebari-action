@@ -315,6 +315,7 @@ describe('waitForApplications', () => {
   interface PodSpec {
     namespace: string
     name: string
+    uid?: string
     restarts?: number
     crashLooping?: boolean
     phase?: string
@@ -327,6 +328,7 @@ describe('waitForApplications', () => {
         metadata: {
           namespace: p.namespace,
           name: p.name,
+          uid: p.uid ?? `uid-${p.name}`,
           ownerReferences: p.jobOwned ? [{ kind: 'Job' }] : []
         },
         status: {
@@ -518,22 +520,114 @@ describe('waitForApplications', () => {
     )
   })
 
+  it('counts restarts of a pod replaced under the same name', () => {
+    // The baseline pod has 4 lifetime restarts, then is replaced under the
+    // same name (StatefulSet recreation). The replacement's counter starts
+    // over, so its 4 restarts all happened during the wait; with a
+    // name-keyed baseline they would hide under the dead pod's count.
+    const pod = { namespace: 'argocd', name: 'repo-server' }
+    mockPolls(
+      [ok(progressing)],
+      [
+        podsJson([{ ...pod, uid: 'old', restarts: 4 }]),
+        podsJson([{ ...pod, uid: 'new', restarts: 4, crashLooping: true }])
+      ]
+    )
+
+    expect(() => waitForApplications('kubeconfig', 600)).toThrow(
+      /argocd\/repo-server\/main is in CrashLoopBackOff after 4 restarts/
+    )
+  })
+
   it('respects per-namespace restart budget overrides', () => {
-    // keycloak's budget is 5: four restarts during the wait, even while
+    // keycloak's budget is 8: seven restarts during the wait, even while
     // crashlooping, must not fail the wait.
     const pod = { namespace: 'keycloak', name: 'keycloak-0' }
     mockPolls(
       [ok(progressing), ok(healthy)],
       [
         podsJson([{ ...pod, restarts: 0 }]),
-        podsJson([{ ...pod, restarts: 4, crashLooping: true }])
+        podsJson([{ ...pod, restarts: 7, crashLooping: true }])
       ]
     )
 
     waitForApplications('kubeconfig', 600)
 
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringMatching(/keycloak\/keycloak-0\/main \(4\)/)
+      expect.stringMatching(/keycloak\/keycloak-0\/main \(7\)/)
+    )
+  })
+
+  // App fixtures for tests whose pods live outside the namespaces the shared
+  // fixtures watch: the watched set is derived from Application destinations.
+  const appsIn = (ns: string, state: 'progressing' | 'healthy') =>
+    state === 'healthy'
+      ? [`nebari-root Synced Healthy argocd`, `app Synced Healthy ${ns}`].join(
+          '\n'
+        )
+      : [
+          `nebari-root OutOfSync Progressing argocd`,
+          `app OutOfSync Progressing ${ns}`
+        ].join('\n')
+
+  it('tolerates CNPG bootstrap restarts within its raised budget', () => {
+    // cnpg-system's budget is 6: the operator legitimately restarts while
+    // Postgres bootstraps, so five restarts must not fail the wait.
+    const pod = { namespace: 'cnpg-system', name: 'cnpg-operator-0' }
+    mockPolls(
+      [
+        ok(appsIn('cnpg-system', 'progressing')),
+        ok(appsIn('cnpg-system', 'healthy'))
+      ],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 5, crashLooping: true }])
+      ]
+    )
+
+    waitForApplications('kubeconfig', 600)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/cnpg-system\/cnpg-operator-0\/main \(5\)/)
+    )
+  })
+
+  it('lets caller-supplied budgets beat the built-in overrides', () => {
+    // keycloak's built-in budget is 8, but the caller tightens it to 2:
+    // three restarts while crashlooping must now fail the wait.
+    const pod = { namespace: 'keycloak', name: 'keycloak-0' }
+    mockPolls(
+      [ok(progressing)],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 3, crashLooping: true }])
+      ]
+    )
+
+    expect(() =>
+      waitForApplications('kubeconfig', 600, { keycloak: 2 })
+    ).toThrow(/budget for keycloak: 2/)
+  })
+
+  it('applies a * budget to namespaces without a specific override', () => {
+    // The default budget is 3; '*' raises it to 6 for this unlisted
+    // namespace, so five restarts while crashlooping must not fail the wait.
+    const pod = { namespace: 'custom-app', name: 'worker-0' }
+    mockPolls(
+      [
+        ok(appsIn('custom-app', 'progressing')),
+        ok(appsIn('custom-app', 'healthy'))
+      ],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 5, crashLooping: true }])
+      ]
+    )
+
+    waitForApplications('kubeconfig', 600, { '*': 6 })
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/custom-app\/worker-0\/main \(5\)/)
     )
   })
 

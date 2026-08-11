@@ -277,16 +277,23 @@ interface AppStatus {
 // destination, so the check tracks the app set instead of a hardcoded list.
 // Overrides are defined for specific namespaces whose components restart
 // legitimately during bootstrap. For example, metallb speakers restart while
-// waiting for the memberlist Secret, keycloak while its database comes up.
+// waiting for the memberlist Secret, keycloak while it waits for its
+// CloudNativePG database (8 is the value the sandbox action converged on
+// after real slow-boot flakes at lower budgets), and the CNPG operator and
+// cluster pods while Postgres bootstraps. Consumers can override any of
+// these via the restart-budgets input without waiting for an action release.
 const DEFAULT_RESTART_BUDGET = 3
 const RESTART_BUDGET_OVERRIDES: Record<string, number> = {
-  keycloak: 5,
-  'metallb-system': 10
+  keycloak: 8,
+  'metallb-system': 10,
+  'cnpg-system': 6,
+  'cloudnative-pg': 6
 }
 
 interface WatchedContainer {
   namespace: string
   pod: string
+  uid: string
   container: string
   restarts: number
   crashLooping: boolean
@@ -324,6 +331,7 @@ function listWatchedContainers(
       metadata: {
         namespace: string
         name: string
+        uid?: string
         ownerReferences?: { kind?: string }[]
       }
       status?: {
@@ -355,6 +363,7 @@ function listWatchedContainers(
       out.push({
         namespace: pod.metadata.namespace,
         pod: pod.metadata.name,
+        uid: pod.metadata.uid ?? '',
         container: cs.name ?? '',
         restarts: cs.restartCount ?? 0,
         crashLooping: cs.state?.waiting?.reason === 'CrashLoopBackOff'
@@ -418,7 +427,12 @@ const REQUIRED_STABLE_POLLS = 3
  */
 export function waitForApplications(
   kubeconfig: string,
-  timeoutSeconds: number
+  timeoutSeconds: number,
+  // Per-namespace budget overrides from the restart-budgets input. An
+  // explicit namespace beats the built-in overrides; '*' replaces the
+  // default budget for namespaces without a specific override ('*' rather
+  // than 'default' because default is a real Kubernetes namespace).
+  restartBudgets: Record<string, number> = {}
 ): void {
   const env = { ...process.env, KUBECONFIG: kubeconfig }
   const deadline = Date.now() + timeoutSeconds * 1000
@@ -429,7 +443,10 @@ export function waitForApplications(
   // baseline captured on the first poll: restarts that predate the wait
   // (bootstrap flaps that already resolved) never count against it.
   // Containers first seen on later polls baseline at 0, because their whole
-  // life happened during the wait.
+  // life happened during the wait. The baseline is keyed by pod UID, not
+  // name: a pod replaced under the same name mid-wait (a StatefulSet
+  // recreating keycloak-0) is a new pod whose restarts all happened during
+  // the wait, and must not hide under the dead pod's count.
   let restartBaseline: Map<string, number> | null = null
   // Accumulates the max delta seen per container across the whole wait, so
   // the success-path warning reports a flap even when the container is gone
@@ -511,18 +528,19 @@ export function waitForApplications(
     if (containers) {
       if (restartBaseline === null) {
         restartBaseline = new Map(
-          containers.map((c) => [
-            `${c.namespace}/${c.pod}/${c.container}`,
-            c.restarts
-          ])
+          containers.map((c) => [`${c.uid}/${c.container}`, c.restarts])
         )
       }
       for (const c of containers) {
         const key = `${c.namespace}/${c.pod}/${c.container}`
-        const delta = c.restarts - (restartBaseline.get(key) ?? 0)
+        const delta =
+          c.restarts - (restartBaseline.get(`${c.uid}/${c.container}`) ?? 0)
         if (delta <= 0) continue
         const budget =
-          RESTART_BUDGET_OVERRIDES[c.namespace] ?? DEFAULT_RESTART_BUDGET
+          restartBudgets[c.namespace] ??
+          RESTART_BUDGET_OVERRIDES[c.namespace] ??
+          restartBudgets['*'] ??
+          DEFAULT_RESTART_BUDGET
         const entry = { ...c, delta, budget }
         const seen = restartedDuringWait.get(key)
         if (!seen || delta > seen.delta) {
