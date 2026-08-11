@@ -29027,7 +29027,6 @@ function deploy() {
     // it must fail closed. The post step then only ever sees normalized values.
     saveState('destroy', getBooleanInput('destroy') ? 'true' : 'false');
     saveState('force', getBooleanInput('force') ? 'true' : 'false');
-    saveState('deployStarted', 'true');
     // Validate the wait inputs before deploying too: a malformed wait-timeout
     // should cost seconds, not a completed cloud deploy. Strict parse:
     // `parseInt(...) || 600` would turn an explicit 0 into 600, truncate
@@ -29039,6 +29038,10 @@ function deploy() {
             'Set wait: false to skip waiting.');
     }
     const waitTimeout = parseInt(rawTimeout, 10);
+    // Only mark the deploy as started once every input has validated: the post
+    // step destroys whenever it sees this flag, and a run that failed on input
+    // validation has nothing to destroy.
+    saveState('deployStarted', 'true');
     // endGroup in finally: exec() throws on failure, and a failed deploy's
     // output is exactly what must not end up inside a collapsed group.
     startGroup('nic deploy');

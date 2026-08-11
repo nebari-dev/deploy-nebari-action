@@ -51,7 +51,6 @@ function deploy(): void {
   // it must fail closed. The post step then only ever sees normalized values.
   core.saveState('destroy', core.getBooleanInput('destroy') ? 'true' : 'false')
   core.saveState('force', core.getBooleanInput('force') ? 'true' : 'false')
-  core.saveState('deployStarted', 'true')
 
   // Validate the wait inputs before deploying too: a malformed wait-timeout
   // should cost seconds, not a completed cloud deploy. Strict parse:
@@ -66,6 +65,11 @@ function deploy(): void {
     )
   }
   const waitTimeout = parseInt(rawTimeout, 10)
+
+  // Only mark the deploy as started once every input has validated: the post
+  // step destroys whenever it sees this flag, and a run that failed on input
+  // validation has nothing to destroy.
+  core.saveState('deployStarted', 'true')
 
   // endGroup in finally: exec() throws on failure, and a failed deploy's
   // output is exactly what must not end up inside a collapsed group.
