@@ -540,21 +540,94 @@ describe('waitForApplications', () => {
   })
 
   it('respects per-namespace restart budget overrides', () => {
-    // keycloak's budget is 5: four restarts during the wait, even while
+    // keycloak's budget is 8: seven restarts during the wait, even while
     // crashlooping, must not fail the wait.
     const pod = { namespace: 'keycloak', name: 'keycloak-0' }
     mockPolls(
       [ok(progressing), ok(healthy)],
       [
         podsJson([{ ...pod, restarts: 0 }]),
-        podsJson([{ ...pod, restarts: 4, crashLooping: true }])
+        podsJson([{ ...pod, restarts: 7, crashLooping: true }])
       ]
     )
 
     waitForApplications('kubeconfig', 600)
 
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringMatching(/keycloak\/keycloak-0\/main \(4\)/)
+      expect.stringMatching(/keycloak\/keycloak-0\/main \(7\)/)
+    )
+  })
+
+  // App fixtures for tests whose pods live outside the namespaces the shared
+  // fixtures watch: the watched set is derived from Application destinations.
+  const appsIn = (ns: string, state: 'progressing' | 'healthy') =>
+    state === 'healthy'
+      ? [`nebari-root Synced Healthy argocd`, `app Synced Healthy ${ns}`].join(
+          '\n'
+        )
+      : [
+          `nebari-root OutOfSync Progressing argocd`,
+          `app OutOfSync Progressing ${ns}`
+        ].join('\n')
+
+  it('tolerates CNPG bootstrap restarts within its raised budget', () => {
+    // cnpg-system's budget is 6: the operator legitimately restarts while
+    // Postgres bootstraps, so five restarts must not fail the wait.
+    const pod = { namespace: 'cnpg-system', name: 'cnpg-operator-0' }
+    mockPolls(
+      [
+        ok(appsIn('cnpg-system', 'progressing')),
+        ok(appsIn('cnpg-system', 'healthy'))
+      ],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 5, crashLooping: true }])
+      ]
+    )
+
+    waitForApplications('kubeconfig', 600)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/cnpg-system\/cnpg-operator-0\/main \(5\)/)
+    )
+  })
+
+  it('lets caller-supplied budgets beat the built-in overrides', () => {
+    // keycloak's built-in budget is 8, but the caller tightens it to 2:
+    // three restarts while crashlooping must now fail the wait.
+    const pod = { namespace: 'keycloak', name: 'keycloak-0' }
+    mockPolls(
+      [ok(progressing)],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 3, crashLooping: true }])
+      ]
+    )
+
+    expect(() =>
+      waitForApplications('kubeconfig', 600, { keycloak: 2 })
+    ).toThrow(/budget for keycloak: 2/)
+  })
+
+  it('applies a * budget to namespaces without a specific override', () => {
+    // The default budget is 3; '*' raises it to 6 for this unlisted
+    // namespace, so five restarts while crashlooping must not fail the wait.
+    const pod = { namespace: 'custom-app', name: 'worker-0' }
+    mockPolls(
+      [
+        ok(appsIn('custom-app', 'progressing')),
+        ok(appsIn('custom-app', 'healthy'))
+      ],
+      [
+        podsJson([{ ...pod, restarts: 0 }]),
+        podsJson([{ ...pod, restarts: 5, crashLooping: true }])
+      ]
+    )
+
+    waitForApplications('kubeconfig', 600, { '*': 6 })
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/custom-app\/worker-0\/main \(5\)/)
     )
   })
 
