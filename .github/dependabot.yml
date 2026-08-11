@@ -14,6 +14,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # @types/node majors track Node majors; stay on the major matching the
+      # node24 runtime in action.yml and bump both together.
+      - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
     groups:
       npm-development:
         dependency-type: development
