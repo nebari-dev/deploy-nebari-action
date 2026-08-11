@@ -50,7 +50,7 @@ inputs:
   wait-timeout:
     description: Seconds to wait for Applications to converge.
     required: false
-    default: '600'
+    default: '1200'
   destroy:
     description: Destroy the deployment in the post step when the job ends.
     required: false
