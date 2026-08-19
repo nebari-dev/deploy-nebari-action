@@ -52,7 +52,10 @@ export default [
             'eslint.config.mjs',
             'jest.config.js',
             'rollup.config.ts'
-          ]
+          ],
+          // The globs above match more than the default cap of 8 files; the
+          // project is small enough that lint speed is not a concern.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20
         },
         tsconfigRootDir: import.meta.dirname
       }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import * as core from '@actions/core'
 
 import { acquireNic, run as exec, waitForApplications } from './nic.js'
+import { extractPlatformOutputs } from './outputs.js'
 
 // Resolve the config file. It is either the one passed by the consumer or
 // the built-in default that ships with the action (a local kind cluster with
@@ -119,6 +120,11 @@ function deploy(): void {
     )
     waitForApplications(kubeconfig, waitTimeout, restartBudgets)
   }
+
+  // After the wait so the platform Secrets and the gateway address exist.
+  // With wait disabled the extraction's own short polls are the only grace
+  // period, so late-provisioned outputs may come back empty.
+  extractPlatformOutputs(kubeconfig, config)
 }
 
 /**

@@ -14,6 +14,7 @@ Specifically, the action:
 - Runs `nic deploy` with your config (or a built-in local kind default).
 - Exports `KUBECONFIG` so every later step in the job runs against the deployed cluster.
 - Waits for the deployment to converge: nebari-root Synced, every Argo CD Application Healthy, and that state stable across consecutive polls.
+- Exposes the platform's entry points as outputs: the Keycloak and ArgoCD admin credentials (masked in logs), the gateway address, and the domain and Keycloak issuer URL. Each output degrades to an empty string when its source is missing, so non-default configs still deploy fine.
 - Destroys the deployment in a post step when the job ends, even when the job failed or was cancelled.
 
 ## Quickstart
@@ -57,10 +58,16 @@ jobs:
 
 ## Outputs
 
-| name         | description                                                                          |
-| ------------ | ------------------------------------------------------------------------------------ |
-| `kubeconfig` | <p>Path to a kubeconfig for the deployed cluster (also exported as KUBECONFIG).</p>  |
-| `nic-binary` | <p>Path to the nic binary used, for running further nic commands in later steps.</p> |
+| name                            | description                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kubeconfig`                    | <p>Path to a kubeconfig for the deployed cluster (also exported as KUBECONFIG).</p>                                                                                                                                                                                                                                                                                                                                           |
+| `nic-binary`                    | <p>Path to the nic binary used, for running further nic commands in later steps.</p>                                                                                                                                                                                                                                                                                                                                          |
+| `domain`                        | <p>The domain the platform was actually deployed with (e.g. nebari.local), read from the deployed keycloak HTTPRoute so NIC's domain defaulting is reflected, with the config file as a fallback. Handy for building the hostnames consumers route to (keycloak.<domain>, etc.). Empty if neither source is readable.</p>                                                                                                     |
+| `keycloak-issuer-url`           | <p>External public issuer URL for the Keycloak deployment, e.g. https://keycloak.nebari.local, read from the deployed keycloak HTTPRoute (the hostname NIC rendered), with the config file as a fallback. Useful for JWT <code>iss</code> claim validation in e2e tests. Empty if neither source is readable.</p>                                                                                                             |
+| `keycloak-admin-password`       | <p>Keycloak admin password for the <em>master</em> realm, masked in logs. Use keycloak-realm-admin-password for the nebari realm. Empty if the secret could not be read.</p>                                                                                                                                                                                                                                                  |
+| `keycloak-realm-admin-password` | <p>Keycloak admin password for the <em>nebari</em> realm, masked in logs. Provisioned asynchronously by NIC's realm-setup PostSync hook after Keycloak becomes Ready, so this can be empty if the secret has not materialized by the time the action polls for it; consumers can then read the <code>nebari-realm-admin-credentials</code> secret in the <code>keycloak</code> namespace themselves after their own wait.</p> |
+| `argocd-admin-password`         | <p>ArgoCD initial admin password, masked in logs. Empty if the secret could not be read (e.g. already deleted after a password change).</p>                                                                                                                                                                                                                                                                                   |
+| `gateway-ip`                    | <p>Address of the LoadBalancer service owned by NIC's nebari-gateway Gateway: the IP (MetalLB on the default local kind cluster) or, on cloud LBs that only get one, the hostname. Empty if no LoadBalancer address was assigned within the extraction window.</p>                                                                                                                                                            |
 
 <!-- action-docs-outputs source="action.yml" -->
 
@@ -124,6 +131,27 @@ Any `nic-version` that is not `latest` or a release tag is treated as a Git ref 
   with:
     nic-version: main
 ```
+
+### Using the platform outputs
+
+The action exposes the deployed platform's entry points as step outputs, useful for e2e tests that talk to Keycloak or route through the gateway:
+
+```yaml
+- uses: nebari-dev/deploy-nebari-action@main
+  id: nebari
+  with:
+    nic-version: latest
+
+- name: Log in to Keycloak
+  run: |
+    kubectl get secret -n envoy-gateway-system nebari-gateway-tls \
+      -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+    curl --cacert ca.crt \
+      --resolve "keycloak.${{ steps.nebari.outputs.domain }}:443:${{ steps.nebari.outputs.gateway-ip }}" \
+      "${{ steps.nebari.outputs.keycloak-issuer-url }}/.well-known/openid-configuration"
+```
+
+The credential outputs are registered as secrets, so they are masked in job logs. The default gateway certificate is selfsigned, so clients that verify TLS need its CA: extract it from the `nebari-gateway-tls` secret as shown above, and build a ConfigMap or Secret mount from it for pods that need to trust `https://<domain>` in-cluster.
 
 ### Keeping the deployment
 
