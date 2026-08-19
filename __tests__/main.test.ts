@@ -11,10 +11,12 @@ import { jest } from '@jest/globals'
 
 import * as core from '../__fixtures__/core.js'
 import * as nic from '../__fixtures__/nic.js'
+import * as outputs from '../__fixtures__/outputs.js'
 
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('../src/nic.js', () => nic)
+jest.unstable_mockModule('../src/outputs.js', () => outputs)
 
 // The module being tested should be imported dynamically. This ensures that
 // the mocks are used in place of any actual dependencies.
@@ -171,6 +173,40 @@ describe('main.ts', () => {
     run()
 
     expect(nic.waitForApplications).not.toHaveBeenCalled()
+  })
+
+  it('extracts the platform outputs after the wait', () => {
+    setInputs(
+      { config: 'my-config.yaml', 'nic-binary': 'nic', 'wait-timeout': '900' },
+      { wait: true, destroy: true, force: true }
+    )
+    const order: string[] = []
+    nic.waitForApplications.mockImplementation(() => {
+      order.push('wait')
+    })
+    outputs.extractPlatformOutputs.mockImplementation(() => {
+      order.push('extract')
+    })
+
+    run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      kubeconfig,
+      path.resolve('my-config.yaml')
+    )
+    // Extraction reads Secrets the platform provisions, so it must run after
+    // convergence.
+    expect(order).toEqual(['wait', 'extract'])
+  })
+
+  it('extracts the platform outputs even when the wait is skipped', () => {
+    run()
+
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      kubeconfig,
+      expect.stringMatching(/default-config\.yaml$/)
+    )
   })
 
   it('rejects a malformed wait-timeout before deploying', () => {
