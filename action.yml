@@ -8,7 +8,10 @@ description: >-
   nebari-root Synced, every Argo CD Application Healthy, and that state stable
   across consecutive polls. Exposes the platform's entry points as outputs:
   admin credentials (masked), the gateway address, and the Keycloak issuer
-  URL.
+  URL. Platform outputs are read with `nic outputs`, which resolves all
+  fields or none: when any field cannot be resolved, every platform output
+  is empty and a warning names each unresolved field and why. Extraction
+  never fails an otherwise successful deploy.
 author: Nebari
 branding:
   icon: upload-cloud
@@ -89,41 +92,44 @@ outputs:
       steps.
   domain:
     description: >-
-      The domain the platform was actually deployed with (e.g. nebari.local),
-      read from the deployed keycloak HTTPRoute so NIC's domain defaulting is
-      reflected, with the config file as a fallback. Handy for building the
-      hostnames consumers route to (keycloak.<domain>, etc.). Empty if
-      neither source is readable.
+      The domain the platform was deployed with (e.g. nebari.local),
+      including NIC's defaulting when the config omits it. Reported by
+      `nic outputs`, so it always matches what the deploying binary
+      rendered. Handy for building the hostnames consumers route to
+      (keycloak.<domain>, etc.). Empty when the platform outputs could not
+      be read.
   keycloak-issuer-url:
     description: >-
-      External public issuer URL for the Keycloak deployment, e.g.
-      https://keycloak.nebari.local, read from the deployed keycloak
-      HTTPRoute (the hostname NIC rendered), with the config file as a
-      fallback. Useful for JWT `iss` claim validation in e2e tests. Empty if
-      neither source is readable.
+      External public issuer URL for the Keycloak deployment (e.g.,
+      https://keycloak.nebari.local). This is the value Keycloak embeds in the `iss`
+      claim of its tokens, useful for JWT validation in e2e tests. NIC only
+      defines an issuer URL when the config sets an explicit domain, so on
+      configs relying on domain defaulting this field cannot be read and no
+      platform outputs are exported. Set `domain` in the config to populate
+      them.
   keycloak-admin-password:
     description: >-
       Keycloak admin password for the *master* realm, masked in logs. Use
-      keycloak-realm-admin-password for the nebari realm. Empty if the secret
-      could not be read.
+      keycloak-realm-admin-password for the nebari realm. Empty when the platform
+      outputs could not be read.
   keycloak-realm-admin-password:
     description: >-
-      Keycloak admin password for the *nebari* realm, masked in logs.
-      Provisioned asynchronously by NIC's realm-setup PostSync hook after
-      Keycloak becomes Ready, so this can be empty if the secret has not
-      materialized by the time the action polls for it; consumers can then
-      read the `nebari-realm-admin-credentials` secret in the `keycloak`
-      namespace themselves after their own wait.
+      Keycloak admin password for the *nebari* realm, masked in logs. NIC
+      provisions the backing secret eagerly at deploy time, so on a healthy
+      platform it is always present. Empty when the platform outputs could
+      not be read.
   argocd-admin-password:
     description: >-
-      ArgoCD initial admin password, masked in logs. Empty if the secret
-      could not be read (e.g. already deleted after a password change).
-  gateway-ip:
+      ArgoCD initial admin password, masked in logs. ArgoCD recommends
+      deleting the backing secret after changing the admin password, so on a
+      platform where that was done this field cannot be read and no
+      platform outputs are exported.
+  gateway-address:
     description: >-
       Address of the LoadBalancer service owned by NIC's nebari-gateway
-      Gateway: the IP (MetalLB on the default local kind cluster) or, on
-      cloud LBs that only get one, the hostname. Empty if no LoadBalancer
-      address was assigned within the extraction window.
+      Gateway: the hostname when the LB publishes one (e.g. AWS ELB), the IP
+      otherwise (MetalLB on the default local kind cluster). Empty when the platform
+      outputs could not be read.
 
 runs:
   using: node24

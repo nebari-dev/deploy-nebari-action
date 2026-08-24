@@ -192,7 +192,7 @@ describe('main.ts', () => {
 
     expect(core.setFailed).not.toHaveBeenCalled()
     expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
-      kubeconfig,
+      '/tmp/nic',
       path.resolve('my-config.yaml')
     )
     // Extraction reads Secrets the platform provisions, so it must run after
@@ -204,7 +204,7 @@ describe('main.ts', () => {
     run()
 
     expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
-      kubeconfig,
+      '/tmp/nic',
       expect.stringMatching(/default-config\.yaml$/)
     )
   })

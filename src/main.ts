@@ -122,9 +122,9 @@ function deploy(): void {
   }
 
   // After the wait so the platform Secrets and the gateway address exist.
-  // With wait disabled the extraction's own short polls are the only grace
-  // period, so late-provisioned outputs may come back empty.
-  extractPlatformOutputs(kubeconfig, config)
+  // With wait disabled, `nic outputs --wait` provides the only grace period,
+  // so late-provisioned outputs may come back empty.
+  extractPlatformOutputs(nic, config)
 }
 
 /**
