@@ -29092,7 +29092,7 @@ function extractPlatformOutputs(nic, configPath) {
         info(`$ ${nic} ${args.join(' ')}`);
         const res = spawnSync(nic, args, {
             encoding: 'utf8',
-            // nic enforces --timeout itself; the process timeout is a backstop
+            // nic enforces --timeout itself. Yhe process timeout is a backstop
             // against a hung nic (e.g. an API-server stall), with slack so nic
             // normally gets to report its own, more specific timeout error.
             timeout: (OUTPUTS_WAIT_TIMEOUT_SECONDS + 60) * 1000,
