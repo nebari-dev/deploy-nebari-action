@@ -7,9 +7,8 @@ import * as core from '@actions/core'
 // admin secret on first start, and the gateway address waits on the load
 // balancer). After the action's own Application wait everything is normally
 // already there and the command returns at once. With wait disabled this
-// window is the only grace period, superseding the short polls the previous
-// kubectl extraction did.
-const OUTPUTS_WAIT_TIMEOUT = '120s'
+// window is the only grace period.
+const OUTPUTS_WAIT_TIMEOUT = '300s'
 
 // The platform outputs as `nic outputs --format json` reports them, mapped
 // to this action's output names. The layout knowledge behind each field
