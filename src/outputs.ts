@@ -8,13 +8,15 @@ import * as core from '@actions/core'
 // balancer). After the action's own Application wait everything is normally
 // already there and the command returns at once. With wait disabled this
 // window is the only grace period.
-const OUTPUTS_WAIT_TIMEOUT = '300s'
+const OUTPUTS_WAIT_TIMEOUT_SECONDS = 300
 
 // The platform outputs as `nic outputs --format json` reports them, mapped
 // to this action's output names. The layout knowledge behind each field
 // (which Secret, which key, which Service) lives in NIC itself, the same
 // binary that deployed the platform, so it cannot go stale here
-// (nebari-infrastructure-core#606).
+// (nebari-infrastructure-core#606). Keys missing from the payload map to ''
+// and extra keys are ignored, so newer nic versions can add fields without
+// breaking extraction.
 const FIELDS: { key: string; output: string; secret: boolean }[] = [
   { key: 'domain', output: 'domain', secret: false },
   { key: 'keycloak_issuer_url', output: 'keycloak-issuer-url', secret: false },
@@ -45,6 +47,23 @@ function degrade(reason: string): void {
   for (const field of FIELDS) core.setOutput(field.output, '')
 }
 
+// nic writes stderr diagnostics as structured slog JSON lines. Pull the
+// error messages out so the degrade warning reads as prose ("unresolved
+// platform outputs: ...") instead of raw JSON. Returns '' when no line
+// carries one (e.g. cobra's plain-text unknown-command error).
+function slogErrors(stderr: string): string {
+  const errors: string[] = []
+  for (const line of stderr.split('\n')) {
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>
+      if (typeof entry.error === 'string') errors.push(entry.error)
+    } catch {
+      // Not a slog JSON line; nothing to extract.
+    }
+  }
+  return errors.join('; ')
+}
+
 /**
  * Export the platform outputs beyond kubeconfig/nic-binary via
  * `nic outputs`: admin credentials (masked), the gateway address, and the
@@ -55,59 +74,87 @@ function degrade(reason: string): void {
 export function extractPlatformOutputs(nic: string, configPath: string): void {
   core.startGroup('Extract platform outputs')
   try {
-    const res = spawnSync(
-      nic,
-      [
-        'outputs',
-        '-f',
-        configPath,
-        '--format',
-        'json',
-        '--show-secrets',
-        '--wait',
-        '--timeout',
-        OUTPUTS_WAIT_TIMEOUT
-      ],
-      { encoding: 'utf8' }
-    )
+    const args = [
+      'outputs',
+      '-f',
+      configPath,
+      '--format',
+      'json',
+      '--show-secrets',
+      '--wait',
+      '--timeout',
+      `${OUTPUTS_WAIT_TIMEOUT_SECONDS}s`
+    ]
+    core.info(`$ ${nic} ${args.join(' ')}`)
+    const res = spawnSync(nic, args, {
+      encoding: 'utf8',
+      // nic enforces --timeout itself. Yhe process timeout is a backstop
+      // against a hung nic (e.g. an API-server stall), with slack so nic
+      // normally gets to report its own, more specific timeout error.
+      timeout: (OUTPUTS_WAIT_TIMEOUT_SECONDS + 60) * 1000,
+      maxBuffer: 64 * 1024 * 1024
+    })
 
     // nic sends progress to stderr by design, keeping the JSON on stdout
-    // parseable. Surface it in the log group either way. On failure the
-    // final stderr line names each unresolved field and why.
+    // parseable. On failure it carries the line naming each unresolved
+    // field and why.
     const stderr = (res.stderr || '').toString().trim()
-    if (stderr) core.info(stderr)
 
     if (res.error) {
       degrade(`failed to run nic outputs: ${res.error.message}`)
       return
     }
     if (res.status !== 0) {
+      // A failed run resolved no secrets (all-or-nothing), so its stderr is
+      // safe to echo unmasked.
+      if (stderr) core.info(stderr)
       if (stderr.includes('unknown command "outputs"')) {
         degrade(
           'this nic version predates `nic outputs`, so platform outputs ' +
             'will be empty. Upgrade nic-version to populate them.'
         )
       } else {
-        degrade(stderr || `nic outputs exited with status ${res.status}`)
+        degrade(
+          slogErrors(stderr) ||
+            stderr ||
+            `nic outputs exited with status ${res.status}` +
+              (res.signal ? ` (signal ${res.signal})` : '')
+        )
       }
       return
     }
 
     let payload: Record<string, unknown>
     try {
-      payload = JSON.parse(res.stdout.toString()) as Record<string, unknown>
+      const parsed: unknown = JSON.parse(res.stdout.toString())
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        throw new Error('not an object')
+      }
+      payload = parsed as Record<string, unknown>
     } catch {
-      degrade('nic outputs did not print valid JSON')
+      degrade('nic outputs did not print a valid JSON object')
       return
     }
+
+    // Register every credential with the runner before any success-path
+    // logging, the stderr echo included: masking only applies to log lines
+    // emitted after the value was registered.
+    for (const field of FIELDS) {
+      const raw = payload[field.key]
+      if (field.secret && typeof raw === 'string' && raw) core.setSecret(raw)
+    }
+
+    if (stderr) core.info(stderr)
 
     for (const field of FIELDS) {
       const raw = payload[field.key]
       const value = typeof raw === 'string' ? raw : ''
       if (field.secret) {
-        // Mask before the value goes anywhere near an output. Only whether
-        // it was found is ever logged.
-        if (value) core.setSecret(value)
+        // Only whether the credential was found is ever logged.
         core.info(
           `${field.output}: ${value ? '(found, masked)' : '(not found)'}`
         )

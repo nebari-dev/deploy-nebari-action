@@ -151,7 +151,9 @@ The action exposes the deployed platform's entry points as step outputs, useful 
       "${{ steps.nebari.outputs.keycloak-issuer-url }}/.well-known/openid-configuration"
 ```
 
-The credential outputs are registered as secrets, so they are masked in job logs. The default gateway certificate is selfsigned, so clients that verify TLS need its CA: extract it from the `nebari-gateway-tls` secret as shown above, and build a ConfigMap or Secret mount from it for pods that need to trust `https://<domain>` in-cluster.
+The credential outputs are registered as secrets, so they are masked in job logs. Masking also means they cannot cross job boundaries: the runner skips any `jobs.<id>.outputs` value that contains a registered secret, so mapping the credential outputs to job outputs silently yields empty strings downstream. Consume them in the same job, or read the backing Kubernetes Secrets from the cluster in the consuming job.
+
+The default gateway certificate is selfsigned, so clients that verify TLS need its CA: extract it from the `nebari-gateway-tls` secret as shown above, and build a ConfigMap or Secret mount from it for pods that need to trust `https://<domain>` in-cluster.
 
 ### Keeping the deployment
 

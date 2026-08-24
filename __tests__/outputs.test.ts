@@ -60,7 +60,7 @@ const PLATFORM_OUTPUTS = [
 ]
 
 afterEach(() => {
-  jest.clearAllMocks()
+  jest.resetAllMocks()
 })
 
 describe('extractPlatformOutputs', () => {
@@ -107,10 +107,23 @@ describe('extractPlatformOutputs', () => {
         '--show-secrets',
         '--wait',
         '--timeout',
-        expect.stringMatching(/^[0-9]+[ms]/)
+        expect.stringMatching(/^[1-9][0-9]*s$/)
       ],
-      expect.objectContaining({ encoding: 'utf8' })
+      // The process timeout backstops a hung nic (its own --timeout is the
+      // real bound), so it only needs to exceed the --wait window.
+      expect.objectContaining({
+        encoding: 'utf8',
+        timeout: expect.any(Number),
+        maxBuffer: 64 * 1024 * 1024
+      })
     )
+    const [, args, opts] = spawnSync.mock.calls[0] as [
+      string,
+      string[],
+      { timeout: number }
+    ]
+    const waitSeconds = parseInt(args[args.indexOf('--timeout') + 1], 10)
+    expect(opts.timeout).toBeGreaterThan(waitSeconds * 1000)
   })
 
   it('masks every credential before outputting it', () => {
@@ -157,6 +170,24 @@ describe('extractPlatformOutputs', () => {
     expect(core.warning).not.toHaveBeenCalled()
   })
 
+  it('masks every credential before echoing nic stderr', () => {
+    // Runner masking only applies to log lines emitted after setSecret, so
+    // the stderr echo must come last even though nic is not expected to put
+    // secrets there.
+    spawnSync.mockReturnValue(ok(HEALTHY_JSON, 'progress line'))
+
+    extractPlatformOutputs(NIC, CONFIG)
+
+    const echo =
+      core.info.mock.invocationCallOrder[
+        core.info.mock.calls.findIndex(([m]) => m === 'progress line')
+      ]
+    for (const order of core.setSecret.mock.invocationCallOrder) {
+      expect(order).toBeLessThan(echo)
+    }
+    expect(core.setSecret).toHaveBeenCalledTimes(3)
+  })
+
   it('degrades every output to empty when nic outputs fails', () => {
     // nic outputs is all-or-nothing: any unresolved field exits non-zero
     // naming it. The action must surface that as a warning, not a failure.
@@ -175,6 +206,30 @@ describe('extractPlatformOutputs', () => {
       expect.stringContaining('unresolved platform outputs: gateway_address')
     )
     expect(core.setSecret).not.toHaveBeenCalled()
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('extracts the error from slog JSON stderr for the warning', () => {
+    // nic's stderr diagnostics are slog JSON lines; the warning should carry
+    // the prose error, not the raw JSON envelope.
+    spawnSync.mockReturnValue(
+      fail(
+        JSON.stringify({
+          time: '2026-08-24T18:00:00Z',
+          level: 'ERROR',
+          msg: 'Command execution failed',
+          error:
+            'unresolved platform outputs: gateway_address (load balancer not ready)'
+        })
+      )
+    )
+
+    extractPlatformOutputs(NIC, CONFIG)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      'platform output extraction failed: unresolved platform outputs: ' +
+        'gateway_address (load balancer not ready)'
+    )
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 
@@ -217,13 +272,33 @@ describe('extractPlatformOutputs', () => {
     extractPlatformOutputs(NIC, CONFIG)
 
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('did not print valid JSON')
+      expect.stringContaining('did not print a valid JSON object')
     )
     for (const name of PLATFORM_OUTPUTS) {
       expect(core.setOutput).toHaveBeenCalledWith(name, '')
     }
     expect(core.setFailed).not.toHaveBeenCalled()
   })
+
+  it.each(['null', '[]', '"str"', '42'])(
+    'degrades when the payload is valid JSON but not an object (%s)',
+    (stdout) => {
+      // JSON.parse succeeds on these, so without an explicit object check
+      // they would either crash the field loop (null) or silently map every
+      // output to '' with no warning at all.
+      spawnSync.mockReturnValue(ok(stdout))
+
+      extractPlatformOutputs(NIC, CONFIG)
+
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('did not print a valid JSON object')
+      )
+      for (const name of PLATFORM_OUTPUTS) {
+        expect(core.setOutput).toHaveBeenCalledWith(name, '')
+      }
+      expect(core.setFailed).not.toHaveBeenCalled()
+    }
+  )
 
   it('outputs empty for a field missing from the payload without masking it', () => {
     // Defensive: a payload from a newer/older nic that drops or nulls a
