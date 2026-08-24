@@ -96,13 +96,14 @@ outputs:
       including NIC's defaulting when the config omits it. Reported by
       `nic outputs`, so it always matches what the deploying binary
       rendered. Handy for building the hostnames consumers route to
-      (keycloak.<domain>, etc.). Empty when the platform outputs could not
+      (`keycloak.<domain>`, etc.). Empty when the platform outputs could not
       be read.
   keycloak-issuer-url:
     description: >-
       External public issuer URL for the Keycloak deployment (e.g.,
       https://keycloak.nebari.local). This is the value Keycloak embeds in the `iss`
-      claim of its tokens, useful for JWT validation in e2e tests. NIC only
+      claim of its tokens, useful for JWT validation in end-to-end tests.
+      NIC only
       defines an issuer URL when the config sets an explicit domain, so on
       configs relying on domain defaulting this field cannot be read and no
       platform outputs are exported. Set `domain` in the config to populate
