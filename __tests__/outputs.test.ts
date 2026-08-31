@@ -189,11 +189,17 @@ describe('extractPlatformOutputs', () => {
   })
 
   it('degrades every output to empty when nic outputs fails', () => {
-    // nic outputs is all-or-nothing: any unresolved field exits non-zero
-    // naming it. The action must surface that as a warning, not a failure.
+    // nic outputs reports all fields or none: any unresolved field exits
+    // non-zero naming it. The action must surface that as a warning, not a
+    // failure.
     spawnSync.mockReturnValue(
       fail(
-        'Error: unresolved platform outputs: gateway_address (load balancer not ready)'
+        JSON.stringify({
+          level: 'ERROR',
+          msg: 'Command execution failed',
+          error:
+            'unresolved platform outputs: gateway_address (load balancer not ready)'
+        })
       )
     )
 
@@ -206,6 +212,27 @@ describe('extractPlatformOutputs', () => {
       expect.stringContaining('unresolved platform outputs: gateway_address')
     )
     expect(core.setSecret).not.toHaveBeenCalled()
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('never echoes raw stderr from a failed run', () => {
+    // A failed run may have resolved credentials internally before the
+    // failure (upstream resolves field by field), and no setSecret has run
+    // on this path, so nothing from stderr may reach the log except the
+    // extracted slog `error` fields. Plain-text stderr (cobra errors,
+    // future upstream text that might embed a value) must be dropped
+    // entirely, falling back to the exit status.
+    const leaked = 'oops secret-value-123 leaked'
+    spawnSync.mockReturnValue(fail(leaked))
+
+    extractPlatformOutputs(NIC, CONFIG)
+
+    for (const call of [...core.info.mock.calls, ...core.warning.mock.calls]) {
+      expect(call[0]).not.toContain('secret-value-123')
+    }
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('exited with status 1')
+    )
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 

@@ -38,10 +38,14 @@ const FIELDS: { key: string; output: string; secret: boolean }[] = [
   { key: 'gateway_address', output: 'gateway-address', secret: false }
 ]
 
-// Degrade every platform output to empty with a warning. `nic outputs` is
-// all-or-nothing: it exits non-zero naming each field it could not resolve
-// rather than reporting an empty value as success, and output extraction
-// must never be the thing that fails an otherwise successful deploy.
+// Degrade every platform output to empty with a warning. `nic outputs`
+// reports all fields or none: it exits non-zero naming each field it could
+// not resolve rather than reporting an empty value as success, and output
+// extraction must never be the thing that fails an otherwise successful
+// deploy. All-or-nothing is a property of the reported payload only: a
+// failed run may still have resolved credentials internally (upstream
+// resolves field by field and keeps earlier successes), and no setSecret
+// has run at that point, so `reason` must never carry raw nic stderr.
 function degrade(reason: string): void {
   core.warning(`platform output extraction failed: ${reason}`)
   for (const field of FIELDS) core.setOutput(field.output, '')
@@ -97,7 +101,12 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
 
     // nic sends progress to stderr by design, keeping the JSON on stdout
     // parseable. On failure it carries the line naming each unresolved
-    // field and why.
+    // field and why. A failed run may have resolved credentials internally
+    // before the failure and nothing has been setSecret-masked yet, so raw
+    // stderr from a failed run is never echoed. nic's error text is built
+    // from field, namespace, secret and key names, never values so the
+    // extracted slog `error` fields are the widest slice that is safe
+    // to emit unmasked.
     const stderr = (res.stderr || '').toString().trim()
 
     if (res.error) {
@@ -105,9 +114,6 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
       return
     }
     if (res.status !== 0) {
-      // A failed run resolved no secrets (all-or-nothing), so its stderr is
-      // safe to echo unmasked.
-      if (stderr) core.info(stderr)
       if (stderr.includes('unknown command "outputs"')) {
         degrade(
           'this nic version predates `nic outputs`, so platform outputs ' +
@@ -116,7 +122,6 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
       } else {
         degrade(
           slogErrors(stderr) ||
-            stderr ||
             `nic outputs exited with status ${res.status}` +
               (res.signal ? ` (signal ${res.signal})` : '')
         )
