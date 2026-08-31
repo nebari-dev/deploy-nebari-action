@@ -268,7 +268,24 @@ describe('extractPlatformOutputs', () => {
     extractPlatformOutputs(NIC, CONFIG)
 
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('predates `nic outputs`')
+      expect.stringContaining('requires v0.14.0 or newer')
+    )
+    for (const name of PLATFORM_OUTPUTS) {
+      expect(core.setOutput).toHaveBeenCalledWith(name, '')
+    }
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('explains the degrade when nic rejects a flag it predates', () => {
+    // A nic new enough to have `outputs` but older than a flag this action
+    // passes (e.g. --show-secrets) is the same version-skew problem, and
+    // the warning must name the fix rather than fall to the generic branch.
+    spawnSync.mockReturnValue(fail('Error: unknown flag: --show-secrets'))
+
+    extractPlatformOutputs(NIC, CONFIG)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('requires v0.14.0 or newer')
     )
     for (const name of PLATFORM_OUTPUTS) {
       expect(core.setOutput).toHaveBeenCalledWith(name, '')

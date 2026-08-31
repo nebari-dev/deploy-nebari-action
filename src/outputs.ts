@@ -10,6 +10,12 @@ import * as core from '@actions/core'
 // window is the only grace period.
 const OUTPUTS_WAIT_TIMEOUT_SECONDS = 300
 
+// `nic outputs` (and every flag this module passes it) shipped in v0.14.0
+// (nebari-infrastructure-core#609). Older nics reject the command or a flag
+// with a cobra plain-text error; both are matched below so the degrade
+// warning names the version that fixes it instead of a bare exit status.
+const MIN_OUTPUTS_VERSION = 'v0.14.0'
+
 // The platform outputs as `nic outputs --format json` reports them, mapped
 // to this action's output names. The layout knowledge behind each field
 // (which Secret, which key, which Service) lives in NIC itself, the same
@@ -118,10 +124,15 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
       return
     }
     if (res.status !== 0) {
-      if (stderr.includes('unknown command "outputs"')) {
+      if (
+        stderr.includes('unknown command "outputs"') ||
+        stderr.includes('unknown flag')
+      ) {
         degrade(
-          'this nic version predates `nic outputs`, so platform outputs ' +
-            'will be empty. Upgrade nic-version to populate them.'
+          'this nic version does not support `nic outputs` as this action ' +
+            `invokes it (requires ${MIN_OUTPUTS_VERSION} or newer), so ` +
+            'platform outputs will be empty. Upgrade nic-version to ' +
+            'populate them.'
         )
       } else {
         degrade(
