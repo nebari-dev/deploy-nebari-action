@@ -3,9 +3,10 @@ import { spawnSync } from 'node:child_process'
 import * as core from '@actions/core'
 
 // `nic outputs` (and every flag this module passes it) shipped in v0.14.0
-// (nebari-infrastructure-core#609). Older nics reject the command or a flag
-// with a cobra plain-text error; both are matched below so the degrade
-// warning names the version that fixes it instead of a bare exit status.
+// (nebari-infrastructure-core#609). Older nic versions reject the command
+// or a flag with a cobra plain-text error. Both are matched below so the
+// degrade warning names the version that fixes it instead of a bare exit
+// status.
 const MIN_OUTPUTS_VERSION = 'v0.14.0'
 
 // The platform outputs as `nic outputs --format json` reports them, mapped

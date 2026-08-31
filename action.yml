@@ -37,7 +37,7 @@ inputs:
     description: >-
       NIC version to acquire. Mutually exclusive with nic-binary. Whichever
       form you use, the platform outputs need v0.14.0 or newer (`nic
-      outputs`): older versions still deploy, but export every platform
+      outputs`). Older versions still deploy, but export every platform
       output empty with a warning.
         - 'latest': download the latest release binary (checksum- and
           provenance-verified).
