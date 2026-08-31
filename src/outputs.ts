@@ -2,14 +2,6 @@ import { spawnSync } from 'node:child_process'
 
 import * as core from '@actions/core'
 
-// How long `nic outputs --wait` may poll for the fields that materialize
-// after `nic deploy` returns (the Argo CD server writes its own initial
-// admin secret on first start, and the gateway address waits on the load
-// balancer). After the action's own Application wait everything is normally
-// already there and the command returns at once. With wait disabled this
-// window is the only grace period.
-const OUTPUTS_WAIT_TIMEOUT_SECONDS = 300
-
 // `nic outputs` (and every flag this module passes it) shipped in v0.14.0
 // (nebari-infrastructure-core#609). Older nics reject the command or a flag
 // with a cobra plain-text error; both are matched below so the degrade
@@ -77,11 +69,16 @@ function slogErrors(stderr: string): string {
 /**
  * Export the platform outputs beyond kubeconfig/nic-binary via
  * `nic outputs`: admin credentials (masked), the gateway address, and the
- * domain-derived URLs. On any failure every platform output degrades to ''
- * with a warning naming what could not be resolved and why. Nothing here
- * fails the action.
+ * domain-derived URLs. `waitTimeoutSeconds` bounds how long the command may
+ * poll for fields that materialize after `nic deploy` returns. On any
+ * failure every platform output degrades to '' with a warning naming what
+ * could not be resolved and why. Nothing here fails the action.
  */
-export function extractPlatformOutputs(nic: string, configPath: string): void {
+export function extractPlatformOutputs(
+  nic: string,
+  configPath: string,
+  waitTimeoutSeconds: number
+): void {
   core.startGroup('Extract platform outputs')
   try {
     const args = [
@@ -93,7 +90,7 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
       '--show-secrets',
       '--wait',
       '--timeout',
-      `${OUTPUTS_WAIT_TIMEOUT_SECONDS}s`
+      `${waitTimeoutSeconds}s`
     ]
     core.info(`$ ${nic} ${args.join(' ')}`)
     const res = spawnSync(nic, args, {
@@ -101,7 +98,7 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
       // nic enforces --timeout itself. The process timeout is a backstop
       // against a hung nic (e.g. an API-server stall), with slack so nic
       // normally gets to report its own, more specific timeout error.
-      timeout: (OUTPUTS_WAIT_TIMEOUT_SECONDS + 60) * 1000,
+      timeout: (waitTimeoutSeconds + 60) * 1000,
       maxBuffer: 64 * 1024 * 1024
     })
 

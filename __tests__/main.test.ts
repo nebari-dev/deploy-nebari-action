@@ -41,7 +41,12 @@ describe('main.ts', () => {
     process.env.GITHUB_ACTION = 'deploy-step'
 
     setInputs(
-      { 'nic-binary': 'nic', token: 'tok', 'wait-timeout': '600' },
+      {
+        'nic-binary': 'nic',
+        token: 'tok',
+        'wait-timeout': '600',
+        'outputs-wait-timeout': '300'
+      },
       { wait: false, destroy: true, force: true }
     )
     nic.acquireNic.mockReturnValue('/tmp/nic')
@@ -71,7 +76,11 @@ describe('main.ts', () => {
 
   it('deploys the config passed via the config input', () => {
     setInputs(
-      { config: 'my-config.yaml', 'nic-binary': 'nic' },
+      {
+        config: 'my-config.yaml',
+        'nic-binary': 'nic',
+        'outputs-wait-timeout': '300'
+      },
       { wait: false, destroy: true, force: true }
     )
 
@@ -117,7 +126,11 @@ describe('main.ts', () => {
 
   it('waits for Applications when wait is true', () => {
     setInputs(
-      { 'nic-binary': 'nic', 'wait-timeout': '900' },
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'outputs-wait-timeout': '300'
+      },
       { wait: true, destroy: true, force: true }
     )
 
@@ -132,6 +145,7 @@ describe('main.ts', () => {
       {
         'nic-binary': 'nic',
         'wait-timeout': '900',
+        'outputs-wait-timeout': '300',
         'restart-budgets': 'keycloak=12, cnpg-system=8 ,*=5'
       },
       { wait: true, destroy: true, force: true }
@@ -177,7 +191,12 @@ describe('main.ts', () => {
 
   it('extracts the platform outputs after the wait', () => {
     setInputs(
-      { config: 'my-config.yaml', 'nic-binary': 'nic', 'wait-timeout': '900' },
+      {
+        config: 'my-config.yaml',
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'outputs-wait-timeout': '300'
+      },
       { wait: true, destroy: true, force: true }
     )
     const order: string[] = []
@@ -193,7 +212,8 @@ describe('main.ts', () => {
     expect(core.setFailed).not.toHaveBeenCalled()
     expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
       '/tmp/nic',
-      path.resolve('my-config.yaml')
+      path.resolve('my-config.yaml'),
+      300
     )
     // Extraction reads Secrets the platform provisions, so it must run after
     // convergence.
@@ -205,8 +225,51 @@ describe('main.ts', () => {
 
     expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
       '/tmp/nic',
-      expect.stringMatching(/default-config\.yaml$/)
+      expect.stringMatching(/default-config\.yaml$/),
+      300
     )
+  })
+
+  it('passes a custom outputs-wait-timeout through to extraction', () => {
+    setInputs(
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '600',
+        'outputs-wait-timeout': '900'
+      },
+      { wait: false, destroy: true, force: true }
+    )
+
+    run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.any(String),
+      900
+    )
+  })
+
+  it('rejects a malformed outputs-wait-timeout before deploying', () => {
+    setInputs(
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '600',
+        'outputs-wait-timeout': '300s'
+      },
+      { wait: false, destroy: true, force: true }
+    )
+
+    run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringMatching(/outputs-wait-timeout must be a positive integer/)
+    )
+    expect(nic.run).not.toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.arrayContaining(['deploy'])
+    )
+    expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
   })
 
   it('rejects a malformed wait-timeout before deploying', () => {

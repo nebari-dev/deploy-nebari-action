@@ -29,6 +29,7 @@ const { extractPlatformOutputs } = await import('../src/outputs.js')
 
 const NIC = '/tmp/nic'
 const CONFIG = '/workspace/config.yaml'
+const WAIT_SECONDS = 300
 
 const HEALTHY_JSON = JSON.stringify({
   domain: 'nebari.local',
@@ -67,7 +68,7 @@ describe('extractPlatformOutputs', () => {
   it('sets every output from the nic outputs JSON', () => {
     spawnSync.mockReturnValue(ok(HEALTHY_JSON))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.setOutput).toHaveBeenCalledWith('domain', 'nebari.local')
     expect(core.setOutput).toHaveBeenCalledWith(
@@ -94,7 +95,7 @@ describe('extractPlatformOutputs', () => {
   it('invokes nic outputs with waiting, JSON, and secrets enabled', () => {
     spawnSync.mockReturnValue(ok(HEALTHY_JSON))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(spawnSync).toHaveBeenCalledWith(
       NIC,
@@ -129,7 +130,7 @@ describe('extractPlatformOutputs', () => {
   it('masks every credential before outputting it', () => {
     spawnSync.mockReturnValue(ok(HEALTHY_JSON))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     for (const pass of ['kc-master-pass', 'kc-realm-pass', 'argo-pass']) {
       expect(core.setSecret).toHaveBeenCalledWith(pass)
@@ -148,7 +149,7 @@ describe('extractPlatformOutputs', () => {
   it('never logs a credential value', () => {
     spawnSync.mockReturnValue(ok(HEALTHY_JSON))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     for (const call of core.info.mock.calls) {
       expect(call[0]).not.toContain('kc-master-pass')
@@ -162,7 +163,7 @@ describe('extractPlatformOutputs', () => {
       ok(HEALTHY_JSON, 'Waiting for platform outputs: gateway_address')
     )
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.info).toHaveBeenCalledWith(
       'Waiting for platform outputs: gateway_address'
@@ -176,7 +177,7 @@ describe('extractPlatformOutputs', () => {
     // secrets there.
     spawnSync.mockReturnValue(ok(HEALTHY_JSON, 'progress line'))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     const echo =
       core.info.mock.invocationCallOrder[
@@ -203,7 +204,7 @@ describe('extractPlatformOutputs', () => {
       )
     )
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     for (const name of PLATFORM_OUTPUTS) {
       expect(core.setOutput).toHaveBeenCalledWith(name, '')
@@ -225,7 +226,7 @@ describe('extractPlatformOutputs', () => {
     const leaked = 'oops secret-value-123 leaked'
     spawnSync.mockReturnValue(fail(leaked))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     for (const call of [...core.info.mock.calls, ...core.warning.mock.calls]) {
       expect(call[0]).not.toContain('secret-value-123')
@@ -251,7 +252,7 @@ describe('extractPlatformOutputs', () => {
       )
     )
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(
       'platform output extraction failed: unresolved platform outputs: ' +
@@ -265,7 +266,7 @@ describe('extractPlatformOutputs', () => {
       fail('Error: unknown command "outputs" for "nic"')
     )
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('requires v0.14.0 or newer')
@@ -282,7 +283,7 @@ describe('extractPlatformOutputs', () => {
     // the warning must name the fix rather than fall to the generic branch.
     spawnSync.mockReturnValue(fail('Error: unknown flag: --show-secrets'))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('requires v0.14.0 or newer')
@@ -301,7 +302,7 @@ describe('extractPlatformOutputs', () => {
       error: new Error('ENOENT')
     })
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('ENOENT'))
     for (const name of PLATFORM_OUTPUTS) {
@@ -325,7 +326,7 @@ describe('extractPlatformOutputs', () => {
       error: new Error('spawnSync /tmp/nic ETIMEDOUT')
     })
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('ETIMEDOUT')
@@ -339,7 +340,7 @@ describe('extractPlatformOutputs', () => {
   it('degrades when the payload is not valid JSON', () => {
     spawnSync.mockReturnValue(ok('not-json'))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('did not print a valid JSON object')
@@ -358,7 +359,7 @@ describe('extractPlatformOutputs', () => {
       // output to '' with no warning at all.
       spawnSync.mockReturnValue(ok(stdout))
 
-      extractPlatformOutputs(NIC, CONFIG)
+      extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
       expect(core.warning).toHaveBeenCalledWith(
         expect.stringContaining('did not print a valid JSON object')
@@ -379,7 +380,7 @@ describe('extractPlatformOutputs', () => {
     partial.argocd_admin_password = null
     spawnSync.mockReturnValue(ok(JSON.stringify(partial)))
 
-    extractPlatformOutputs(NIC, CONFIG)
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
 
     expect(core.setOutput).toHaveBeenCalledWith('gateway-address', '')
     expect(core.setOutput).toHaveBeenCalledWith('argocd-admin-password', '')

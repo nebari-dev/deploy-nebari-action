@@ -59,6 +59,17 @@ inputs:
     description: Seconds to wait for Applications to converge.
     required: false
     default: '1200'
+  outputs-wait-timeout:
+    description: >-
+      Seconds `nic outputs --wait` may poll for platform outputs that
+      materialize after `nic deploy` returns (the gateway address waits on
+      the load balancer, and Argo CD writes its initial admin secret on
+      first start). After the action's own convergence wait the outputs are
+      normally already there and this window goes unused. With wait: false
+      it is the only grace period, and a cold cluster can exhaust it before
+      the fields resolve, degrading every platform output to empty.
+    required: false
+    default: '300'
   restart-budgets:
     description: >-
       Comma-separated namespace=count pairs overriding the per-namespace

@@ -92,6 +92,21 @@ function deploy(): void {
     ? parseRestartBudgets(core.getInput('restart-budgets'))
     : {}
 
+  // Output extraction always runs, so its wait window validates
+  // unconditionally, and before the deploy for the same reason as
+  // wait-timeout.
+  const rawOutputsTimeout = core.getInput('outputs-wait-timeout')
+  if (
+    !/^[0-9]+$/.test(rawOutputsTimeout) ||
+    parseInt(rawOutputsTimeout, 10) <= 0
+  ) {
+    throw new Error(
+      'outputs-wait-timeout must be a positive integer number of seconds, ' +
+        `got '${rawOutputsTimeout}'.`
+    )
+  }
+  const outputsWaitTimeout = parseInt(rawOutputsTimeout, 10)
+
   // Only mark the deploy as started once every input has validated: the post
   // step destroys whenever it sees this flag, and a run that failed on input
   // validation has nothing to destroy.
@@ -122,9 +137,11 @@ function deploy(): void {
   }
 
   // After the wait so the platform Secrets and the gateway address exist.
-  // With wait disabled, `nic outputs --wait` provides the only grace period,
-  // so late-provisioned outputs may come back empty.
-  extractPlatformOutputs(nic, config)
+  // With wait disabled, `nic deploy` returns well before Argo CD converges,
+  // so on a cold cluster the outputs window is the only grace period and is
+  // often exhausted before the gateway address resolves, degrading every
+  // platform output to empty. Raise outputs-wait-timeout or enable wait.
+  extractPlatformOutputs(nic, config, outputsWaitTimeout)
 }
 
 /**
