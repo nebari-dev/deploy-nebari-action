@@ -77,3 +77,33 @@ jobs:
         run: |
           echo "kubeconfig: ${{ steps.test-action.outputs.kubeconfig }}"
           kubectl get pods -A
+
+      # Hard assertion that the real `nic outputs` passthrough works
+      # end-to-end: the unit tests mock the subprocess and every failure
+      # degrades to empty outputs plus a warning, so a renamed JSON key or
+      # flag would otherwise ship green with six empty outputs. The default
+      # config pins domain: nebari.local, so all six fields must resolve,
+      # and the domain check catches a renamed upstream key (which maps to
+      # '' with no warning at all).
+      - name: Check platform outputs
+        env:
+          DOMAIN: ${{ steps.test-action.outputs.domain }}
+          ISSUER: ${{ steps.test-action.outputs.keycloak-issuer-url }}
+          GATEWAY: ${{ steps.test-action.outputs.gateway-address }}
+          KC_ADMIN: ${{ steps.test-action.outputs.keycloak-admin-password }}
+          KC_REALM: >-
+            ${{ steps.test-action.outputs.keycloak-realm-admin-password }}
+          ARGOCD: ${{ steps.test-action.outputs.argocd-admin-password }}
+        run: |
+          rc=0
+          for n in DOMAIN ISSUER GATEWAY KC_ADMIN KC_REALM ARGOCD; do
+            if [ -z "${!n}" ]; then
+              echo "::error::platform output $n is empty"
+              rc=1
+            fi
+          done
+          if [ "$DOMAIN" != "nebari.local" ]; then
+            echo "::error::domain is '$DOMAIN', expected nebari.local"
+            rc=1
+          fi
+          exit "$rc"
