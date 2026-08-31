@@ -108,23 +108,16 @@ describe('extractPlatformOutputs', () => {
         '--show-secrets',
         '--wait',
         '--timeout',
-        expect.stringMatching(/^[1-9][0-9]*s$/)
+        '300s'
       ],
       // The process timeout backstops a hung nic (its own --timeout is the
-      // real bound), so it only needs to exceed the --wait window.
+      // real bound), so it exceeds the --wait window by a fixed slack.
       expect.objectContaining({
         encoding: 'utf8',
-        timeout: expect.any(Number),
+        timeout: 360_000,
         maxBuffer: 64 * 1024 * 1024
       })
     )
-    const [, args, opts] = spawnSync.mock.calls[0] as [
-      string,
-      string[],
-      { timeout: number }
-    ]
-    const waitSeconds = parseInt(args[args.indexOf('--timeout') + 1], 10)
-    expect(opts.timeout).toBeGreaterThan(waitSeconds * 1000)
   })
 
   it('masks every credential before outputting it', () => {
