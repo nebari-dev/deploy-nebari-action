@@ -106,12 +106,12 @@ outputs:
       steps.
   domain:
     description: >-
-      The domain the platform was deployed with (e.g. nebari.local),
-      including NIC's defaulting when the config omits it. Reported by
-      `nic outputs`, so it always matches what the deploying binary
-      rendered. Handy for building the hostnames consumers route to
+      The domain the platform was deployed with (e.g. nebari.local).
+      Reported by `nic outputs`, so it always matches what the deploying
+      binary rendered. Handy for building the hostnames consumers route to
       (`keycloak.<domain>`, etc.). Empty when the platform outputs could not
-      be read.
+      be read, which includes configs that omit `domain` (see
+      keycloak-issuer-url).
   keycloak-issuer-url:
     description: >-
       External public issuer URL for the Keycloak deployment (e.g.,
