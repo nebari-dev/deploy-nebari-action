@@ -28885,9 +28885,12 @@ restartBudgets = {}) {
             // server would otherwise be indistinguishable from "no apps yet" until
             // the timeout. Transient blips during bootstrap are normal, so keep
             // retrying rather than failing.
-            const msg = res.error?.message ||
-                (res.stderr || '').toString().trim() ||
-                `exit status ${res.status}`;
+            // A spawn error (e.g. a timeout) usually leaves stderr populated, so
+            // report both rather than letting the error message mask the more
+            // specific diagnostic kubectl wrote before.
+            const msg = [res.error?.message, (res.stderr || '').toString().trim()]
+                .filter(Boolean)
+                .join(': ') || `exit status ${res.status}`;
             if (warnedPollFailure) {
                 info(`kubectl get applications failed again: ${msg}`);
             }
@@ -29007,13 +29010,11 @@ restartBudgets = {}) {
     }
 }
 
-// How long `nic outputs --wait` may poll for the fields that materialize
-// after `nic deploy` returns (the Argo CD server writes its own initial
-// admin secret on first start, and the gateway address waits on the load
-// balancer). After the action's own Application wait everything is normally
-// already there and the command returns at once. With wait disabled this
-// window is the only grace period.
-const OUTPUTS_WAIT_TIMEOUT_SECONDS = 300;
+// `nic outputs` (and every flag this module passes it) shipped in v0.14.0
+// (nebari-infrastructure-core#609). Older nics reject the command or a flag
+// with a cobra plain-text error; both are matched below so the degrade
+// warning names the version that fixes it instead of a bare exit status.
+const MIN_OUTPUTS_VERSION = 'v0.14.0';
 // The platform outputs as `nic outputs --format json` reports them, mapped
 // to this action's output names. The layout knowledge behind each field
 // (which Secret, which key, which Service) lives in NIC itself, the same
@@ -29041,10 +29042,14 @@ const FIELDS = [
     },
     { key: 'gateway_address', output: 'gateway-address', secret: false }
 ];
-// Degrade every platform output to empty with a warning. `nic outputs` is
-// all-or-nothing: it exits non-zero naming each field it could not resolve
-// rather than reporting an empty value as success, and output extraction
-// must never be the thing that fails an otherwise successful deploy.
+// Degrade every platform output to empty with a warning. `nic outputs`
+// reports all fields or none: it exits non-zero naming each field it could
+// not resolve rather than reporting an empty value as success, and output
+// extraction must never be the thing that fails an otherwise successful
+// deploy. All-or-nothing is a property of the reported payload only: a
+// failed run may still have resolved credentials internally (upstream
+// resolves field by field and keeps earlier successes), and no setSecret
+// has run at that point, so `reason` must never carry raw nic stderr.
 function degrade(reason) {
     warning(`platform output extraction failed: ${reason}`);
     for (const field of FIELDS)
@@ -29071,11 +29076,12 @@ function slogErrors(stderr) {
 /**
  * Export the platform outputs beyond kubeconfig/nic-binary via
  * `nic outputs`: admin credentials (masked), the gateway address, and the
- * domain-derived URLs. On any failure every platform output degrades to ''
- * with a warning naming what could not be resolved and why. Nothing here
- * fails the action.
+ * domain-derived URLs. `waitTimeoutSeconds` bounds how long the command may
+ * poll for fields that materialize after `nic deploy` returns. On any
+ * failure every platform output degrades to '' with a warning naming what
+ * could not be resolved and why. Nothing here fails the action.
  */
-function extractPlatformOutputs(nic, configPath) {
+function extractPlatformOutputs(nic, configPath, waitTimeoutSeconds) {
     startGroup('Extract platform outputs');
     try {
         const args = [
@@ -29087,7 +29093,7 @@ function extractPlatformOutputs(nic, configPath) {
             '--show-secrets',
             '--wait',
             '--timeout',
-            `${OUTPUTS_WAIT_TIMEOUT_SECONDS}s`
+            `${waitTimeoutSeconds}s`
         ];
         info(`$ ${nic} ${args.join(' ')}`);
         const res = spawnSync(nic, args, {
@@ -29095,29 +29101,34 @@ function extractPlatformOutputs(nic, configPath) {
             // nic enforces --timeout itself. The process timeout is a backstop
             // against a hung nic (e.g. an API-server stall), with slack so nic
             // normally gets to report its own, more specific timeout error.
-            timeout: (OUTPUTS_WAIT_TIMEOUT_SECONDS + 60) * 1000,
+            timeout: (waitTimeoutSeconds + 60) * 1000,
             maxBuffer: 64 * 1024 * 1024
         });
         // nic sends progress to stderr by design, keeping the JSON on stdout
         // parseable. On failure it carries the line naming each unresolved
-        // field and why.
+        // field and why. A failed run may have resolved credentials internally
+        // before the failure and nothing has been setSecret-masked yet, so raw
+        // stderr from a failed run is never echoed. nic's error text is built
+        // from field, namespace, secret and key names, never values so the
+        // extracted slog `error` fields are the widest slice that is safe
+        // to emit unmasked.
         const stderr = (res.stderr || '').toString().trim();
         if (res.error) {
-            degrade(`failed to run nic outputs: ${res.error.message}`);
+            const detail = slogErrors(stderr);
+            degrade(`failed to run nic outputs: ${res.error.message}` +
+                (detail ? ` (${detail})` : ''));
             return;
         }
         if (res.status !== 0) {
-            // A failed run resolved no secrets (all-or-nothing), so its stderr is
-            // safe to echo unmasked.
-            if (stderr)
-                info(stderr);
-            if (stderr.includes('unknown command "outputs"')) {
-                degrade('this nic version predates `nic outputs`, so platform outputs ' +
-                    'will be empty. Upgrade nic-version to populate them.');
+            if (stderr.includes('unknown command "outputs"') ||
+                stderr.includes('unknown flag')) {
+                degrade('this nic version does not support `nic outputs` as this action ' +
+                    `invokes it (requires ${MIN_OUTPUTS_VERSION} or newer), so ` +
+                    'platform outputs will be empty. Upgrade nic-version to ' +
+                    'populate them.');
             }
             else {
                 degrade(slogErrors(stderr) ||
-                    stderr ||
                     `nic outputs exited with status ${res.status}` +
                         (res.signal ? ` (signal ${res.signal})` : ''));
             }
@@ -29234,6 +29245,16 @@ function deploy() {
     const restartBudgets = wait
         ? parseRestartBudgets(getInput('restart-budgets'))
         : {};
+    // Output extraction always runs, so its wait window validates
+    // unconditionally, and before the deploy for the same reason as
+    // wait-timeout.
+    const rawOutputsTimeout = getInput('outputs-wait-timeout');
+    if (!/^[0-9]+$/.test(rawOutputsTimeout) ||
+        parseInt(rawOutputsTimeout, 10) <= 0) {
+        throw new Error('outputs-wait-timeout must be a positive integer number of seconds, ' +
+            `got '${rawOutputsTimeout}'.`);
+    }
+    const outputsWaitTimeout = parseInt(rawOutputsTimeout, 10);
     // Only mark the deploy as started once every input has validated: the post
     // step destroys whenever it sees this flag, and a run that failed on input
     // validation has nothing to destroy.
@@ -29256,9 +29277,11 @@ function deploy() {
         waitForApplications(kubeconfig, waitTimeout, restartBudgets);
     }
     // After the wait so the platform Secrets and the gateway address exist.
-    // With wait disabled, `nic outputs --wait` provides the only grace period,
-    // so late-provisioned outputs may come back empty.
-    extractPlatformOutputs(nic, config);
+    // With wait disabled, `nic deploy` returns well before Argo CD converges,
+    // so on a cold cluster the outputs window is the only grace period and is
+    // often exhausted before the gateway address resolves, degrading every
+    // platform output to empty. Raise outputs-wait-timeout or enable wait.
+    extractPlatformOutputs(nic, config, outputsWaitTimeout);
 }
 /**
  * The main step of the action: acquire nic, deploy, export KUBECONFIG, and
