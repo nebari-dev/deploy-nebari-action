@@ -293,6 +293,32 @@ describe('extractPlatformOutputs', () => {
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 
+  it('surfaces the slog error alongside a spawn failure', () => {
+    // The backstop timeout kills nic but preserves its stderr (only ENOENT
+    // leaves it empty), so the warning must carry the slog line naming the
+    // field nic was waiting on, not just ETIMEDOUT.
+    spawnSync.mockReturnValue({
+      status: null,
+      stdout: '',
+      stderr: JSON.stringify({
+        level: 'ERROR',
+        msg: 'waiting',
+        error: 'unresolved platform outputs: gateway_address'
+      }),
+      error: new Error('spawnSync /tmp/nic ETIMEDOUT')
+    })
+
+    extractPlatformOutputs(NIC, CONFIG)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('ETIMEDOUT')
+    )
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('unresolved platform outputs: gateway_address')
+    )
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
   it('degrades when the payload is not valid JSON', () => {
     spawnSync.mockReturnValue(ok('not-json'))
 

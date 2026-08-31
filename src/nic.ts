@@ -486,10 +486,13 @@ export function waitForApplications(
       // server would otherwise be indistinguishable from "no apps yet" until
       // the timeout. Transient blips during bootstrap are normal, so keep
       // retrying rather than failing.
+      // A spawn error (e.g. a timeout) usually leaves stderr populated, so
+      // report both rather than letting the error message mask the more
+      // specific diagnostic kubectl wrote before.
       const msg =
-        res.error?.message ||
-        (res.stderr || '').toString().trim() ||
-        `exit status ${res.status}`
+        [res.error?.message, (res.stderr || '').toString().trim()]
+          .filter(Boolean)
+          .join(': ') || `exit status ${res.status}`
       if (warnedPollFailure) {
         core.info(`kubectl get applications failed again: ${msg}`)
       } else {

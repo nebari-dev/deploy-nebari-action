@@ -110,7 +110,11 @@ export function extractPlatformOutputs(nic: string, configPath: string): void {
     const stderr = (res.stderr || '').toString().trim()
 
     if (res.error) {
-      degrade(`failed to run nic outputs: ${res.error.message}`)
+      const detail = slogErrors(stderr)
+      degrade(
+        `failed to run nic outputs: ${res.error.message}` +
+          (detail ? ` (${detail})` : '')
+      )
       return
     }
     if (res.status !== 0) {
