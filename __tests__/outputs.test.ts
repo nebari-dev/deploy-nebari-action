@@ -120,6 +120,20 @@ describe('extractPlatformOutputs', () => {
     )
   })
 
+  it('derives the backstop from the wait window with fixed slack', () => {
+    // A second point pins the formula: 300 -> 360000 alone cannot tell a
+    // +60s slack from a x1.2 multiplier.
+    spawnSync.mockReturnValue(ok(HEALTHY_JSON))
+
+    extractPlatformOutputs(NIC, CONFIG, 900)
+
+    expect(spawnSync).toHaveBeenCalledWith(
+      NIC,
+      expect.arrayContaining(['--timeout', '900s']),
+      expect.objectContaining({ timeout: 960_000 })
+    )
+  })
+
   it('masks every credential before outputting it', () => {
     spawnSync.mockReturnValue(ok(HEALTHY_JSON))
 

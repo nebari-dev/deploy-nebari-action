@@ -250,27 +250,35 @@ describe('main.ts', () => {
     )
   })
 
-  it('rejects a malformed outputs-wait-timeout before deploying', () => {
-    setInputs(
-      {
-        'nic-binary': 'nic',
-        'wait-timeout': '600',
-        'outputs-wait-timeout': '300s'
-      },
-      { wait: false, destroy: true, force: true }
-    )
+  // '0' passes the digits regex and only the <= 0 arm rejects it, so it
+  // needs its own case or that arm goes untested.
+  it.each(['300s', '0'])(
+    "rejects outputs-wait-timeout '%s' before deploying",
+    (raw) => {
+      setInputs(
+        {
+          'nic-binary': 'nic',
+          'wait-timeout': '600',
+          'outputs-wait-timeout': raw
+        },
+        { wait: false, destroy: true, force: true }
+      )
 
-    run()
+      run()
 
-    expect(core.setFailed).toHaveBeenCalledWith(
-      expect.stringMatching(/outputs-wait-timeout must be a positive integer/)
-    )
-    expect(nic.run).not.toHaveBeenCalledWith(
-      '/tmp/nic',
-      expect.arrayContaining(['deploy'])
-    )
-    expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
-  })
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /outputs-wait-timeout must be a positive integer/
+        )
+      )
+      expect(nic.run).not.toHaveBeenCalledWith(
+        '/tmp/nic',
+        expect.arrayContaining(['deploy'])
+      )
+      expect(outputs.extractPlatformOutputs).not.toHaveBeenCalled()
+      expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
+    }
+  )
 
   it('rejects a malformed wait-timeout before deploying', () => {
     setInputs(
