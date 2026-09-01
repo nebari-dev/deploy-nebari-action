@@ -69,6 +69,8 @@ inputs:
       it is the only grace period, and a cold cluster can exhaust it before
       the fields resolve, degrading every platform output to empty.
     required: false
+    # 300 is nic's own --timeout default and covers the ~300s MetalLB
+    # address-assignment stall seen on cold kind runs (587d194).
     default: '300'
   restart-budgets:
     description: >-
