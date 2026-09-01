@@ -106,4 +106,17 @@ jobs:
             echo "::error::domain is '$DOMAIN', expected nebari.local"
             rc=1
           fi
+          if [ "$ISSUER" != "https://keycloak.nebari.local" ]; then
+            echo "::error::keycloak-issuer-url is '$ISSUER'"
+            rc=1
+          fi
+          # A swap inside the FIELDS table keeps every output non-empty, so
+          # the checks above miss it. Pinning domain and issuer plus
+          # requiring distinct credentials closes most swaps (the gateway
+          # address has no stable value to pin).
+          if [ "$KC_ADMIN" = "$KC_REALM" ] || [ "$KC_ADMIN" = "$ARGOCD" ] ||
+            [ "$KC_REALM" = "$ARGOCD" ]; then
+            echo "::error::credential outputs are not distinct"
+            rc=1
+          fi
           exit "$rc"
