@@ -267,9 +267,7 @@ describe('main.ts', () => {
       run()
 
       expect(core.setFailed).toHaveBeenCalledWith(
-        expect.stringMatching(
-          /outputs-wait-timeout must be a positive integer/
-        )
+        expect.stringMatching(/outputs-wait-timeout must be a positive integer/)
       )
       expect(nic.run).not.toHaveBeenCalledWith(
         '/tmp/nic',
