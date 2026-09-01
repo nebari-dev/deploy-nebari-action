@@ -43,8 +43,14 @@ const FIELDS: { key: string; output: string; secret: boolean }[] = [
 // extraction must never be the thing that fails an otherwise successful
 // deploy. All-or-nothing is a property of the reported payload only: a
 // failed run may still have resolved credentials internally (upstream
-// resolves field by field and keeps earlier successes), and no setSecret
-// has run at that point, so `reason` must never carry raw nic stderr.
+// readOutputs resolves field by field and keeps earlier successes), and on
+// most failure paths no setSecret has run yet, so `reason` must never carry
+// raw nic stderr. Passing slogErrors() output still leans on upstream, just
+// on a narrower slice: nic's outputs error text (unresolvedError,
+// secretValue, abandonedReason in nebari-infrastructure-core#609) is built
+// from field, namespace, secret and key names, never values. The %w in
+// secretValue wrapping arbitrary client-go text is the part that could
+// drift.
 function degrade(reason: string): void {
   core.warning(`platform output extraction failed: ${reason}`)
   for (const field of FIELDS) core.setOutput(field.output, '')
@@ -105,12 +111,9 @@ export function extractPlatformOutputs(
 
     // nic sends progress to stderr by design, keeping the JSON on stdout
     // parseable. On failure it carries the line naming each unresolved
-    // field and why. A failed run may have resolved credentials internally
-    // before the failure and nothing has been setSecret-masked yet, so raw
-    // stderr from a failed run is never echoed. nic's error text is built
-    // from field, namespace, secret and key names, never values so the
-    // extracted slog `error` fields are the widest slice that is safe
-    // to emit unmasked.
+    // field and why, but raw stderr from a failed run is never echoed and
+    // only the extracted slog `error` fields reach the log. The invariant
+    // this rests on is documented at degrade().
     const stderr = (res.stderr || '').toString().trim()
 
     if (res.error) {
