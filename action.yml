@@ -6,7 +6,12 @@ description: >-
   (nic-version). Exports KUBECONFIG so the steps after this action run against
   the deployed cluster, and by default waits for the deployment to converge:
   nebari-root Synced, every Argo CD Application Healthy, and that state stable
-  across consecutive polls.
+  across consecutive polls. Exposes the platform's entry points as outputs:
+  admin credentials (masked), the gateway address, and the Keycloak issuer
+  URL. Platform outputs are read with `nic outputs`, which resolves all
+  fields or none: when any field cannot be resolved, every platform output
+  is empty and a warning names each unresolved field and why. Extraction
+  never fails an otherwise successful deploy.
 author: Nebari
 branding:
   icon: upload-cloud
@@ -30,7 +35,10 @@ inputs:
     default: ''
   nic-version:
     description: >-
-      NIC version to acquire. Mutually exclusive with nic-binary.
+      NIC version to acquire. Mutually exclusive with nic-binary. Whichever
+      form you use, the platform outputs need v0.14.0 or newer (`nic
+      outputs`). Older versions still deploy, but export every platform
+      output empty with a warning.
         - 'latest': download the latest release binary (checksum- and
           provenance-verified).
         - 'vX.Y.Z': download that release binary (checksum- and
@@ -51,6 +59,19 @@ inputs:
     description: Seconds to wait for Applications to converge.
     required: false
     default: '1200'
+  outputs-wait-timeout:
+    description: >-
+      Seconds `nic outputs --wait` may poll for platform outputs that
+      materialize after `nic deploy` returns (the gateway address waits on
+      the load balancer, and Argo CD writes its initial admin secret on
+      first start). After the action's own convergence wait the outputs are
+      normally already there and this window goes unused. With wait: false
+      it is the only grace period, and a cold cluster can exhaust it before
+      the fields resolve, degrading every platform output to empty.
+    required: false
+    # 300 is nic's own --timeout default and covers the ~300s MetalLB
+    # address-assignment stall seen on cold kind runs (587d194).
+    default: '300'
   restart-budgets:
     description: >-
       Comma-separated namespace=count pairs overriding the per-namespace
@@ -85,6 +106,47 @@ outputs:
     description: >-
       Path to the nic binary used, for running further nic commands in later
       steps.
+  domain:
+    description: >-
+      The domain the platform was deployed with (e.g. nebari.local).
+      Reported by `nic outputs`, so it always matches what the deploying
+      binary rendered. Handy for building the hostnames consumers route to
+      (`keycloak.<domain>`, etc.). Empty when the platform outputs could not
+      be read, which includes configs that omit `domain` (see
+      keycloak-issuer-url).
+  keycloak-issuer-url:
+    description: >-
+      External public issuer URL for the Keycloak deployment (e.g.,
+      https://keycloak.nebari.local). This is the value Keycloak embeds in the `iss`
+      claim of its tokens, useful for JWT validation in end-to-end tests.
+      NIC only
+      defines an issuer URL when the config sets an explicit domain, so on
+      configs relying on domain defaulting this field cannot be read and no
+      platform outputs are exported. Set `domain` in the config to populate
+      them.
+  keycloak-admin-password:
+    description: >-
+      Keycloak admin password for the *master* realm, masked in logs. Use
+      keycloak-realm-admin-password for the nebari realm. Empty when the platform
+      outputs could not be read.
+  keycloak-realm-admin-password:
+    description: >-
+      Keycloak admin password for the *nebari* realm, masked in logs. NIC
+      provisions the backing secret eagerly at deploy time, so on a healthy
+      platform it is always present. Empty when the platform outputs could
+      not be read.
+  argocd-admin-password:
+    description: >-
+      ArgoCD initial admin password, masked in logs. ArgoCD recommends
+      deleting the backing secret after changing the admin password, so on a
+      platform where that was done this field cannot be read and no
+      platform outputs are exported.
+  gateway-address:
+    description: >-
+      Address of the LoadBalancer service owned by NIC's nebari-gateway
+      Gateway: the hostname when the LB publishes one (e.g. AWS ELB), the IP
+      otherwise (MetalLB on the default local kind cluster). Empty when the platform
+      outputs could not be read.
 
 runs:
   using: node24

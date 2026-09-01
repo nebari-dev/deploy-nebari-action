@@ -11,10 +11,12 @@ import { jest } from '@jest/globals'
 
 import * as core from '../__fixtures__/core.js'
 import * as nic from '../__fixtures__/nic.js'
+import * as outputs from '../__fixtures__/outputs.js'
 
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
 jest.unstable_mockModule('../src/nic.js', () => nic)
+jest.unstable_mockModule('../src/outputs.js', () => outputs)
 
 // The module being tested should be imported dynamically. This ensures that
 // the mocks are used in place of any actual dependencies.
@@ -39,7 +41,12 @@ describe('main.ts', () => {
     process.env.GITHUB_ACTION = 'deploy-step'
 
     setInputs(
-      { 'nic-binary': 'nic', token: 'tok', 'wait-timeout': '600' },
+      {
+        'nic-binary': 'nic',
+        token: 'tok',
+        'wait-timeout': '600',
+        'outputs-wait-timeout': '300'
+      },
       { wait: false, destroy: true, force: true }
     )
     nic.acquireNic.mockReturnValue('/tmp/nic')
@@ -69,7 +76,11 @@ describe('main.ts', () => {
 
   it('deploys the config passed via the config input', () => {
     setInputs(
-      { config: 'my-config.yaml', 'nic-binary': 'nic' },
+      {
+        config: 'my-config.yaml',
+        'nic-binary': 'nic',
+        'outputs-wait-timeout': '300'
+      },
       { wait: false, destroy: true, force: true }
     )
 
@@ -115,7 +126,11 @@ describe('main.ts', () => {
 
   it('waits for Applications when wait is true', () => {
     setInputs(
-      { 'nic-binary': 'nic', 'wait-timeout': '900' },
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'outputs-wait-timeout': '300'
+      },
       { wait: true, destroy: true, force: true }
     )
 
@@ -130,6 +145,7 @@ describe('main.ts', () => {
       {
         'nic-binary': 'nic',
         'wait-timeout': '900',
+        'outputs-wait-timeout': '300',
         'restart-budgets': 'keycloak=12, cnpg-system=8 ,*=5'
       },
       { wait: true, destroy: true, force: true }
@@ -172,6 +188,95 @@ describe('main.ts', () => {
 
     expect(nic.waitForApplications).not.toHaveBeenCalled()
   })
+
+  it('extracts the platform outputs after the wait', () => {
+    setInputs(
+      {
+        config: 'my-config.yaml',
+        'nic-binary': 'nic',
+        'wait-timeout': '900',
+        'outputs-wait-timeout': '300'
+      },
+      { wait: true, destroy: true, force: true }
+    )
+    const order: string[] = []
+    nic.waitForApplications.mockImplementation(() => {
+      order.push('wait')
+    })
+    outputs.extractPlatformOutputs.mockImplementation(() => {
+      order.push('extract')
+    })
+
+    run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      '/tmp/nic',
+      path.resolve('my-config.yaml'),
+      300
+    )
+    // Extraction reads Secrets the platform provisions, so it must run after
+    // convergence.
+    expect(order).toEqual(['wait', 'extract'])
+  })
+
+  it('extracts the platform outputs even when the wait is skipped', () => {
+    run()
+
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.stringMatching(/default-config\.yaml$/),
+      300
+    )
+  })
+
+  it('passes a custom outputs-wait-timeout through to extraction', () => {
+    setInputs(
+      {
+        'nic-binary': 'nic',
+        'wait-timeout': '600',
+        'outputs-wait-timeout': '900'
+      },
+      { wait: false, destroy: true, force: true }
+    )
+
+    run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(outputs.extractPlatformOutputs).toHaveBeenCalledWith(
+      '/tmp/nic',
+      expect.any(String),
+      900
+    )
+  })
+
+  // '0' passes the digits regex and only the <= 0 arm rejects it, so it
+  // needs its own case or that arm goes untested.
+  it.each(['300s', '0'])(
+    "rejects outputs-wait-timeout '%s' before deploying",
+    (raw) => {
+      setInputs(
+        {
+          'nic-binary': 'nic',
+          'wait-timeout': '600',
+          'outputs-wait-timeout': raw
+        },
+        { wait: false, destroy: true, force: true }
+      )
+
+      run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringMatching(/outputs-wait-timeout must be a positive integer/)
+      )
+      expect(nic.run).not.toHaveBeenCalledWith(
+        '/tmp/nic',
+        expect.arrayContaining(['deploy'])
+      )
+      expect(outputs.extractPlatformOutputs).not.toHaveBeenCalled()
+      expect(core.saveState).not.toHaveBeenCalledWith('deployStarted', 'true')
+    }
+  )
 
   it('rejects a malformed wait-timeout before deploying', () => {
     setInputs(
