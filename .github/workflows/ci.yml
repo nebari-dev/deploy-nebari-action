@@ -82,9 +82,9 @@ jobs:
       # end-to-end: the unit tests mock the subprocess and every failure
       # degrades to empty outputs plus a warning, so a renamed JSON key or
       # flag would otherwise ship green with six empty outputs. The default
-      # config pins domain: nebari.local, so all six fields must resolve,
-      # and the domain check catches a renamed upstream key (which maps to
-      # '' with no warning at all).
+      # config pins domain: nebari.local, so all six fields must resolve.
+      # The emptiness loop catches a renamed upstream key (which maps to ''
+      # with no warning at all), and the value checks catch a wrong value.
       - name: Check platform outputs
         env:
           DOMAIN: ${{ steps.test-action.outputs.domain }}
