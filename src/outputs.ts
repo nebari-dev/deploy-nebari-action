@@ -122,19 +122,25 @@ export function extractPlatformOutputs(
       return
     }
     if (res.status !== 0) {
+      const detail = slogErrors(stderr)
       if (
         stderr.includes('unknown command "outputs"') ||
         stderr.includes('unknown flag')
       ) {
+        // The detail suffix matters here too: a newer nic whose real error
+        // text merely mentions an unknown flag would otherwise have its
+        // diagnostics swallowed by the version message.
         degrade(
           'this nic version does not support `nic outputs` as this action ' +
             `invokes it (requires ${MIN_OUTPUTS_VERSION} or newer), so ` +
-            'platform outputs will be empty. Upgrade nic-version to ' +
-            'populate them.'
+            'platform outputs will be empty. Point nic-version or ' +
+            `nic-binary at ${MIN_OUTPUTS_VERSION} or newer to populate ` +
+            'them.' +
+            (detail ? ` (${detail})` : '')
         )
       } else {
         degrade(
-          slogErrors(stderr) ||
+          detail ||
             `nic outputs exited with status ${res.status}` +
               (res.signal ? ` (signal ${res.signal})` : '')
         )

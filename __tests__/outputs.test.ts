@@ -287,6 +287,28 @@ describe('extractPlatformOutputs', () => {
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 
+  it('keeps slog diagnostics when the skew match hits real error text', () => {
+    // A v0.14+ nic whose genuine error happens to contain "unknown flag"
+    // matches the skew branch. The version message is then wrong but
+    // harmless, as long as the real diagnostics still make it out.
+    spawnSync.mockReturnValue(
+      fail(
+        JSON.stringify({
+          level: 'ERROR',
+          msg: 'Command execution failed',
+          error: 'config rejected: unknown flag in gateway spec'
+        })
+      )
+    )
+
+    extractPlatformOutputs(NIC, CONFIG, WAIT_SECONDS)
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('config rejected: unknown flag in gateway spec')
+    )
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
   it('degrades when nic cannot be started at all', () => {
     spawnSync.mockReturnValue({
       status: null,
