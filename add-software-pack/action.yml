@@ -1,8 +1,8 @@
 name: Add Software Pack
 description: >-
   Install a software pack on a Nebari platform deployed by this action, by
-  applying the pack's Argo CD Application and waiting for it to be Synced and
-  Healthy. Works with any cluster and repository provider. Run it after the
+  applying the pack's Argo CD Application and waiting for its first sync to
+  succeed and for it to be Healthy. Works with any cluster and repository provider. Run it after the
   deploy action, which exports KUBECONFIG.
 author: Nebari
 inputs:
@@ -20,11 +20,14 @@ inputs:
     required: false
     default: ''
   wait:
-    description: Wait for the Application to be Synced and Healthy.
+    description: >-
+      Wait for the Application's first sync to succeed and for it to be
+      Healthy. A pack can stay OutOfSync after a successful sync when Argo CD
+      diffs fields the API server defaults, so the sync status is not checked.
     required: false
     default: 'true'
   wait-timeout:
-    description: Seconds to wait for each of Synced and Healthy.
+    description: Seconds to wait for each of the sync and Healthy.
     required: false
     default: '600'
 
@@ -61,7 +64,7 @@ runs:
         TIMEOUT: ${{ inputs.wait-timeout }}s
       run: |
         kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
-          --for=jsonpath='{.status.sync.status}'=Synced
+          --for=jsonpath='{.status.operationState.phase}'=Succeeded
         kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
           --for=jsonpath='{.status.health.status}'=Healthy
 

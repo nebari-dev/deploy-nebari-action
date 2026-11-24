@@ -158,7 +158,7 @@ The default gateway certificate is selfsigned, so clients that verify TLS need i
 
 ### Installing software packs
 
-The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest, then waits until the Application is Synced and Healthy. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. The sub-action enables automated sync on the Application, keeping any sync settings the manifest already has. Use the `nebari-apps` project, which accepts any source.
+The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest, then waits until its first sync succeeds and it is Healthy. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. The sub-action enables automated sync on the Application, keeping any sync settings the manifest already has. Use the `nebari-apps` project, which accepts any source.
 
 To install a published pack, point the manifest at the pack's released chart:
 
@@ -209,7 +209,7 @@ To test a pack from its own repository, point the manifest's `spec.source` at th
     target-revision: ${{ github.sha }}
 ```
 
-The repository must be public, since Argo CD has no credentials for it. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the Synced and Healthy waits.
+The repository must be public, since Argo CD has no credentials for it. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the sync and Healthy waits.
 
 ### Keeping the deployment
 
