@@ -5,7 +5,6 @@ description: >-
   Healthy. Works with any cluster and repository provider. Run it after the
   deploy action, which exports KUBECONFIG.
 author: Nebari
-
 inputs:
   application-manifest:
     description: >-
