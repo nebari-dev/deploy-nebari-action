@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: git-pack
+  namespace: argocd
+spec:
+  project: nebari-apps
+  source:
+    repoURL: https://github.com/nebari-dev/deploy-nebari-action
+    path: .github/fixtures/add-software-pack/chart
+    # Overridden in CI with the commit under test.
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: git-pack
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

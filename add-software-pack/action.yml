@@ -1,0 +1,74 @@
+name: Add Software Pack
+description: >-
+  Install a software pack on a Nebari platform deployed by this action, by
+  applying the pack's Argo CD Application and waiting for it to be Synced and
+  Healthy. Works with any cluster and repository provider. Run it after the
+  deploy action, which exports KUBECONFIG.
+author: Nebari
+
+inputs:
+  application-manifest:
+    description: >-
+      Path to the pack's Argo CD Application manifest. Argo CD pulls the source
+      it names (a Git, Helm, or OCI repository). The sub-action enables
+      automated sync on it, keeping any settings the manifest already has.
+    required: true
+  target-revision:
+    description: >-
+      Optional value for the Application's spec.source.targetRevision, for
+      testing a pack from its own repository at the commit under test (e.g.
+      the github.sha context). Only for single-source Applications.
+    required: false
+    default: ''
+  wait:
+    description: Wait for the Application to be Synced and Healthy.
+    required: false
+    default: 'true'
+  wait-timeout:
+    description: Seconds to wait for each of Synced and Healthy.
+    required: false
+    default: '600'
+
+outputs:
+  name:
+    description: Name of the installed Argo CD Application.
+    value: ${{ steps.apply.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Apply the Application
+      id: apply
+      shell: bash
+      env:
+        MANIFEST: ${{ inputs.application-manifest }}
+        TARGET_REVISION: ${{ inputs.target-revision }}
+      run: |
+        rendered=$(kubectl patch --local -f "$MANIFEST" --type merge -o yaml \
+          -p '{"spec":{"syncPolicy":{"automated":{}}}}')
+        if [[ -n "$TARGET_REVISION" ]]; then
+          rendered=$(kubectl patch --local -f - --type merge -o yaml \
+            -p "{\"spec\":{\"source\":{\"targetRevision\":\"$TARGET_REVISION\"}}}" \
+            <<< "$rendered")
+        fi
+        app=$(kubectl apply -n argocd -f - -o name <<< "$rendered")
+        echo "name=${app#*/}" >> "$GITHUB_OUTPUT"
+
+    - name: Wait for the Application
+      if: inputs.wait == 'true'
+      shell: bash
+      env:
+        APP: application/${{ steps.apply.outputs.name }}
+        TIMEOUT: ${{ inputs.wait-timeout }}s
+      run: |
+        kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
+          --for=jsonpath='{.status.sync.status}'=Synced
+        kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
+          --for=jsonpath='{.status.health.status}'=Healthy
+
+    - name: Show the Application status
+      if: failure() && steps.apply.outputs.name != ''
+      shell: bash
+      env:
+        APP: application/${{ steps.apply.outputs.name }}
+      run: kubectl get "$APP" -n argocd -o yaml

@@ -156,6 +156,61 @@ The credential outputs are registered as secrets, so they are masked in job logs
 
 The default gateway certificate is selfsigned, so clients that verify TLS need its CA: extract it from the `nebari-gateway-tls` secret as shown above, and build a ConfigMap or Secret mount from it for pods that need to trust `https://<domain>` in-cluster.
 
+### Installing software packs
+
+The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest, then waits until the Application is Synced and Healthy. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. The sub-action enables automated sync on the Application, keeping any sync settings the manifest already has. Use the `nebari-apps` project, which accepts any source.
+
+To install a published pack, point the manifest at the pack's released chart:
+
+```yaml
+- uses: nebari-dev/deploy-nebari-action@main
+  with:
+    nic-version: latest
+
+- uses: nebari-dev/deploy-nebari-action/add-software-pack@main
+  with:
+    application-manifest: .github/ci/nebi-pack.yaml
+```
+
+```yaml
+# .github/ci/nebi-pack.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nebi-pack
+  namespace: argocd
+spec:
+  project: nebari-apps
+  source:
+    repoURL: https://nebari-dev.github.io/nebi-pack
+    chart: nebari-nebi-pack
+    targetRevision: 0.1.4
+    helm:
+      valuesObject:
+        nebariapp:
+          hostname: nebi.nebari.local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nebi
+  syncPolicy:
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: 'true'
+    syncOptions:
+      - CreateNamespace=true
+```
+
+To test a pack from its own repository, point the manifest's `spec.source` at the repository and pass the commit under test as `target-revision`. Argo CD fetches the commit by SHA, which also works for pull requests from forks:
+
+```yaml
+- uses: nebari-dev/deploy-nebari-action/add-software-pack@main
+  with:
+    application-manifest: .github/ci/application.yaml
+    target-revision: ${{ github.sha }}
+```
+
+The repository must be public, since Argo CD has no credentials for it. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the Synced and Healthy waits.
+
 ### Keeping the deployment
 
 Set `destroy: false` to leave the deployment running when the job ends, for example to debug a failing environment:

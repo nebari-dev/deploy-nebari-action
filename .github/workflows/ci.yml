@@ -120,3 +120,24 @@ jobs:
             rc=1
           fi
           exit "$rc"
+
+      - name: Add a pack from a Helm repository
+        uses: ./add-software-pack
+        with:
+          application-manifest: .github/fixtures/add-software-pack/remote-application.yaml
+
+      - name: Add a pack from a Git repository at the commit under test
+        uses: ./add-software-pack
+        with:
+          application-manifest: .github/fixtures/add-software-pack/git-application.yaml
+          target-revision: ${{ github.sha }}
+
+      - name: Check the Git pack synced the commit under test
+        run: |
+          revision=$(kubectl get application git-pack -n argocd \
+            -o jsonpath='{.status.sync.revision}')
+          if [ "$revision" != "$GITHUB_SHA" ]; then
+            echo "::error::git-pack synced $revision, expected $GITHUB_SHA"
+            exit 1
+          fi
+          kubectl get configmap git-pack -n git-pack
