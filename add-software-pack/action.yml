@@ -25,15 +25,16 @@ inputs:
   wait:
     description: >-
       Wait for the sync this sub-action requests to succeed and for the
-      Application to be Healthy. Fails as soon as the sync fails. A pack can
+      Application to be Healthy, then for the NebariApps it manages, if any,
+      to be Ready. Fails as soon as the sync fails. A pack can
       stay OutOfSync after a successful sync when Argo CD diffs fields the API
       server defaults, so the sync status is not checked.
     required: false
     default: 'true'
   wait-timeout:
     description: >-
-      Seconds to wait for each of the sync to start, the sync to finish, and
-      the Application to be Healthy.
+      Seconds to wait for each of the sync to start, the sync to finish, the
+      Application to be Healthy, and each NebariApp to be Ready.
     required: false
     default: '600'
 
@@ -95,6 +96,14 @@ runs:
         fi
         kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
           --for=jsonpath='{.status.health.status}'=Healthy
+        # Argo CD has no health check for NebariApps yet
+        # (nebari-dev/nebari-infrastructure-core#702), so Healthy doesn't
+        # cover them. Wait for the ones this Application manages.
+        nebariapps=$(kubectl get "$APP" -n argocd -o jsonpath='{range .status.resources[?(@.kind=="NebariApp")]}{.namespace}/{.name}{" "}{end}')
+        for nebariapp in $nebariapps; do
+          kubectl wait "nebariapps.reconcilers.nebari.dev/${nebariapp#*/}" -n "${nebariapp%/*}" \
+            --timeout="$TIMEOUT" --for=condition=Ready
+        done
 
     - name: Show the Application status
       if: failure() && steps.apply.outputs.name != ''

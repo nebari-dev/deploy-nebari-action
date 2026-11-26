@@ -158,7 +158,7 @@ The default gateway certificate is selfsigned, so clients that verify TLS need i
 
 ### Installing software packs
 
-The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest together with a [sync request](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-kubectl/), then waits until that sync succeeds and the Application is Healthy. The sync uses the manifest's sync options, prune setting, and retry strategy, like Argo CD's automated sync would. It fails as soon as the sync fails. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. Applying an Application that already exists updates it, and the wait only trusts the status of the new sync. Use the `nebari-apps` project, which accepts any source.
+The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest together with a [sync request](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-kubectl/), then waits until that sync succeeds and the Application is Healthy. The sync uses the manifest's sync options, prune setting, and retry strategy, like Argo CD's automated sync would. It fails as soon as the sync fails. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. Applying an Application that already exists updates it, and the wait only trusts the status of the new sync. Use the `nebari-apps` project, which accepts any source. If the pack defines NebariApps, the sub-action also waits for each of them to be Ready, since Argo CD has no health check for them yet ([#702](https://github.com/nebari-dev/nebari-infrastructure-core/issues/702)).
 
 To install a published pack, point the manifest at the pack's released chart:
 
