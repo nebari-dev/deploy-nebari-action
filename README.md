@@ -158,7 +158,7 @@ The default gateway certificate is selfsigned, so clients that verify TLS need i
 
 ### Installing software packs
 
-The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest, then waits until its first sync succeeds and it is Healthy. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. The sub-action enables automated sync on the Application, keeping any sync settings the manifest already has. Use the `nebari-apps` project, which accepts any source.
+The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest together with a [sync request](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-kubectl/), then waits until that sync succeeds and the Application is Healthy. The sync uses the manifest's sync options, prune setting, and retry strategy, like Argo CD's automated sync would. It fails as soon as the sync fails. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. Applying an Application that already exists updates it, and the wait only trusts the status of the new sync. Use the `nebari-apps` project, which accepts any source.
 
 To install a published pack, point the manifest at the pack's released chart:
 
@@ -209,7 +209,7 @@ To test a pack from its own repository, point the manifest's `spec.source` at th
     target-revision: ${{ github.sha }}
 ```
 
-The repository must be public, since Argo CD has no credentials for it. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the sync and Healthy waits.
+The repository must be public, since Argo CD has no credentials for it. The sub-action needs `kubectl` and `jq`, which GitHub-hosted runners include. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the waits for the sync to start, the sync to finish, and the Application to be Healthy.
 
 ### Keeping the deployment
 

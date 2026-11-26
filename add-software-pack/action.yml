@@ -1,16 +1,19 @@
 name: Add Software Pack
 description: >-
-  Install a software pack on a Nebari platform deployed by this action, by
-  applying the pack's Argo CD Application and waiting for its first sync to
-  succeed and for it to be Healthy. Works with any cluster and repository provider. Run it after the
-  deploy action, which exports KUBECONFIG.
+  Install or update a software pack on a Nebari platform deployed by this
+  action, by applying the pack's Argo CD Application with a sync request and
+  waiting for that sync to succeed and for the Application to be Healthy.
+  Works with any cluster and repository provider. Run it after the deploy
+  action, which exports KUBECONFIG.
 author: Nebari
 inputs:
   application-manifest:
     description: >-
       Path to the pack's Argo CD Application manifest. Argo CD pulls the source
-      it names (a Git, Helm, or OCI repository). The sub-action enables
-      automated sync on it, keeping any settings the manifest already has.
+      it names (a Git, Helm, or OCI repository). The sub-action syncs it once
+      with the manifest's sync options, prune setting, and retry strategy, the
+      same way Argo CD's automated sync would, and leaves its sync policy as
+      is.
     required: true
   target-revision:
     description: >-
@@ -21,13 +24,16 @@ inputs:
     default: ''
   wait:
     description: >-
-      Wait for the Application's first sync to succeed and for it to be
-      Healthy. A pack can stay OutOfSync after a successful sync when Argo CD
-      diffs fields the API server defaults, so the sync status is not checked.
+      Wait for the sync this sub-action requests to succeed and for the
+      Application to be Healthy. Fails as soon as the sync fails. A pack can
+      stay OutOfSync after a successful sync when Argo CD diffs fields the API
+      server defaults, so the sync status is not checked.
     required: false
     default: 'true'
   wait-timeout:
-    description: Seconds to wait for each of the sync and Healthy.
+    description: >-
+      Seconds to wait for each of the sync to start, the sync to finish, and
+      the Application to be Healthy.
     required: false
     default: '600'
 
@@ -39,6 +45,14 @@ outputs:
 runs:
   using: composite
   steps:
+    # The Application is applied with an operation, Argo CD's declarative sync
+    # request (https://argo-cd.readthedocs.io/en/stable/user-guide/sync-kubectl/).
+    # Its unique initiatedBy.username identifies this sync in the status, so
+    # the wait never reads the result of an earlier sync of an existing
+    # Application. Argo CD runs such a request with only the parameters it
+    # carries, so the spec's sync policy is copied into it the same way Argo CD
+    # builds its own automated sync (autoSync in controller/appcontroller.go).
+    # kubectl only converts the manifest to JSON.
     - name: Apply the Application
       id: apply
       shell: bash
@@ -46,25 +60,39 @@ runs:
         MANIFEST: ${{ inputs.application-manifest }}
         TARGET_REVISION: ${{ inputs.target-revision }}
       run: |
-        rendered=$(kubectl patch --local -f "$MANIFEST" --type merge -o yaml \
-          -p '{"spec":{"syncPolicy":{"automated":{}}}}')
-        if [[ -n "$TARGET_REVISION" ]]; then
-          rendered=$(kubectl patch --local -f - --type merge -o yaml \
-            -p "{\"spec\":{\"source\":{\"targetRevision\":\"$TARGET_REVISION\"}}}" \
-            <<< "$rendered")
-        fi
+        sync_id="add-software-pack-$(date +%s%N)"
+        rendered=$(kubectl patch --local -f "$MANIFEST" --type merge -p '{}' -o json |
+          jq --arg id "$sync_id" --arg rev "$TARGET_REVISION" '
+            .operation = {
+              initiatedBy: {username: $id},
+              retry: (.spec.syncPolicy.retry // {limit: 5}),
+              sync: {
+                prune: (.spec.syncPolicy.automated.prune // false),
+                syncOptions: .spec.syncPolicy.syncOptions
+              }
+            }
+            | if $rev != "" then .spec.source.targetRevision = $rev else . end')
         app=$(kubectl apply -n argocd -f - -o name <<< "$rendered")
         echo "name=${app#*/}" >> "$GITHUB_OUTPUT"
+        echo "sync-id=$sync_id" >> "$GITHUB_OUTPUT"
 
     - name: Wait for the Application
       if: inputs.wait == 'true'
       shell: bash
       env:
         APP: application/${{ steps.apply.outputs.name }}
+        SYNC_ID: ${{ steps.apply.outputs.sync-id }}
         TIMEOUT: ${{ inputs.wait-timeout }}s
       run: |
         kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
-          --for=jsonpath='{.status.operationState.phase}'=Succeeded
+          --for=jsonpath='{.status.operationState.operation.initiatedBy.username}'="$SYNC_ID"
+        kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
+          --for=jsonpath='{.status.operationState.finishedAt}'
+        phase=$(kubectl get "$APP" -n argocd -o jsonpath='{.status.operationState.phase}')
+        if [[ "$phase" != Succeeded ]]; then
+          echo "::error::The sync of $APP ended $phase"
+          exit 1
+        fi
         kubectl wait "$APP" -n argocd --timeout="$TIMEOUT" \
           --for=jsonpath='{.status.health.status}'=Healthy
 
