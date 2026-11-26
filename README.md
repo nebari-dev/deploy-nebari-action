@@ -182,7 +182,7 @@ metadata:
 spec:
   project: nebari-apps
   source:
-    repoURL: https://nebari-dev.github.io/nebi-pack
+    repoURL: https://nebari-dev.github.io/helm-repository
     chart: nebari-nebi-pack
     targetRevision: 0.1.4
     helm:
