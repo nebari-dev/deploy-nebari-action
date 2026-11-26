@@ -60,7 +60,12 @@ runs:
       env:
         MANIFEST: ${{ inputs.application-manifest }}
         TARGET_REVISION: ${{ inputs.target-revision }}
+        WAIT: ${{ inputs.wait }}
+        WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
       run: |
+        case "$WAIT" in true|True|TRUE|false|False|FALSE) ;; *) echo "::error::wait must be true or false, got '$WAIT'"; exit 1 ;; esac
+        [[ "$WAIT_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::wait-timeout must be a positive number of seconds, got '$WAIT_TIMEOUT'"; exit 1; }
+
         sync_id="add-software-pack-$(date +%s%N)"
         rendered=$(kubectl patch --local -f "$MANIFEST" --type merge -p '{}' -o json |
           jq --arg id "$sync_id" --arg rev "$TARGET_REVISION" '
