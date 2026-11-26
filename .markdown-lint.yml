@@ -8,6 +8,11 @@ MD004:
 # inputs/outputs tables are generated from action.yml by action-docs
 MD013: false
 
+# Allow repeated headings in different sections, such as the Inputs and Outputs
+# tables action-docs generates for the root action and add-software-pack
+MD024:
+  siblings_only: true
+
 # Allow the inline HTML action-docs emits inside generated table cells
 MD033:
   allowed_elements:

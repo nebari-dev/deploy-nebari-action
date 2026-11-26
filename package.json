@@ -28,7 +28,7 @@
   },
   "scripts": {
     "bundle": "npm run docs && npm run format:write && npm run package",
-    "docs": "npx action-docs --no-banner --update-readme README.md",
+    "docs": "npx action-docs --no-banner --update-readme README.md && npx action-docs --no-banner --toc-level 4 --source add-software-pack/action.yml --update-readme README.md",
     "ci-test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
     "coverage": "npx make-coverage-badge --output-path ./badges/coverage.svg",
     "format:write": "npx prettier --write .",

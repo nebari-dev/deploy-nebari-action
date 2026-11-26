@@ -156,6 +156,84 @@ The credential outputs are registered as secrets, so they are masked in job logs
 
 The default gateway certificate is selfsigned, so clients that verify TLS need its CA: extract it from the `nebari-gateway-tls` secret as shown above, and build a ConfigMap or Secret mount from it for pods that need to trust `https://<domain>` in-cluster.
 
+### Installing software packs
+
+The `add-software-pack` sub-action installs a software pack by applying its Argo CD Application manifest together with a [sync request](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-kubectl/), then waits until that sync succeeds and the Application is Healthy. The sync uses the manifest's sync options, prune setting, and retry strategy, like Argo CD's automated sync would. It fails as soon as the sync fails. Argo CD pulls the source the manifest names, so it works on any deployment, local or cloud. Applying an Application that already exists updates it, and the wait only trusts the status of the new sync. Use the `nebari-apps` project, which accepts any source. If the pack defines NebariApps, the sub-action also waits for each of them to be Ready, since Argo CD has no health check for them yet ([#702](https://github.com/nebari-dev/nebari-infrastructure-core/issues/702)).
+
+To install a published pack, point the manifest at the pack's released chart:
+
+```yaml
+- uses: nebari-dev/deploy-nebari-action@main
+  with:
+    nic-version: latest
+
+- uses: nebari-dev/deploy-nebari-action/add-software-pack@main
+  with:
+    application-manifest: .github/ci/nebi-pack.yaml
+```
+
+```yaml
+# .github/ci/nebi-pack.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nebi-pack
+  namespace: argocd
+spec:
+  project: nebari-apps
+  source:
+    repoURL: https://nebari-dev.github.io/helm-repository
+    chart: nebari-nebi-pack
+    targetRevision: 0.1.4
+    helm:
+      valuesObject:
+        nebariapp:
+          hostname: nebi.nebari.local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nebi
+  syncPolicy:
+    managedNamespaceMetadata:
+      labels:
+        nebari.dev/managed: 'true'
+    syncOptions:
+      - CreateNamespace=true
+```
+
+To test a pack from its own repository, point the manifest's `spec.source` at the repository and pass the commit under test as `target-revision`. Argo CD fetches the commit by SHA, which also works for pull requests from forks:
+
+```yaml
+- uses: nebari-dev/deploy-nebari-action/add-software-pack@main
+  with:
+    application-manifest: .github/ci/application.yaml
+    target-revision: ${{ github.sha }}
+```
+
+The repository must be public, since Argo CD has no credentials for it. The sub-action needs `kubectl` and `jq`, which GitHub-hosted runners include. Install several packs by calling the sub-action once per pack, in dependency order.
+
+<!-- action-docs-inputs source="add-software-pack/action.yml" -->
+
+#### Inputs
+
+| name                   | description                                                                                                                                                                                                                                                                                                                                                                                              | required | default |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- |
+| `application-manifest` | <p>Path to the pack's Argo CD Application manifest, holding only that Application. Apply any other resources the pack needs in an earlier step. Argo CD pulls the source it names (a Git, Helm, or OCI repository). The sub-action syncs it once with the manifest's sync options, prune setting, and retry strategy, the same way Argo CD's automated sync would, and leaves its sync policy as is.</p> | `true`   | `""`    |
+| `target-revision`      | <p>Optional value for the Application's spec.source.targetRevision, for testing a pack from its own repository at the commit under test (e.g. the github.sha context). Only for single-source Applications.</p>                                                                                                                                                                                          | `false`  | `""`    |
+| `wait`                 | <p>Wait for the sync this sub-action requests to succeed and for the Application to be Healthy, then for the NebariApps it manages, if any, to be Ready. Fails as soon as the sync fails. A pack can stay OutOfSync after a successful sync when Argo CD diffs fields the API server defaults, so the sync status is not checked.</p>                                                                    | `false`  | `true`  |
+| `wait-timeout`         | <p>Seconds to wait for each of the sync to start, the sync to finish, the Application to be Healthy, and each NebariApp to be Ready.</p>                                                                                                                                                                                                                                                                 | `false`  | `600`   |
+
+<!-- action-docs-inputs source="add-software-pack/action.yml" -->
+
+<!-- action-docs-outputs source="add-software-pack/action.yml" -->
+
+#### Outputs
+
+| name   | description                                       |
+| ------ | ------------------------------------------------- |
+| `name` | <p>Name of the installed Argo CD Application.</p> |
+
+<!-- action-docs-outputs source="add-software-pack/action.yml" -->
+
 ### Keeping the deployment
 
 Set `destroy: false` to leave the deployment running when the job ends, for example to debug a failing environment:
