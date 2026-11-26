@@ -209,7 +209,30 @@ To test a pack from its own repository, point the manifest's `spec.source` at th
     target-revision: ${{ github.sha }}
 ```
 
-The repository must be public, since Argo CD has no credentials for it. The sub-action needs `kubectl` and `jq`, which GitHub-hosted runners include. Install several packs by calling the sub-action once per pack, in dependency order. Set `wait: false` to skip the wait, and `wait-timeout` (seconds, default 600) to bound each of the waits for the sync to start, the sync to finish, and the Application to be Healthy.
+The repository must be public, since Argo CD has no credentials for it. The sub-action needs `kubectl` and `jq`, which GitHub-hosted runners include. Install several packs by calling the sub-action once per pack, in dependency order.
+
+<!-- action-docs-inputs source="add-software-pack/action.yml" -->
+
+#### Inputs
+
+| name                   | description                                                                                                                                                                                                                                                                                                                                                                                              | required | default |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- |
+| `application-manifest` | <p>Path to the pack's Argo CD Application manifest, holding only that Application. Apply any other resources the pack needs in an earlier step. Argo CD pulls the source it names (a Git, Helm, or OCI repository). The sub-action syncs it once with the manifest's sync options, prune setting, and retry strategy, the same way Argo CD's automated sync would, and leaves its sync policy as is.</p> | `true`   | `""`    |
+| `target-revision`      | <p>Optional value for the Application's spec.source.targetRevision, for testing a pack from its own repository at the commit under test (e.g. the github.sha context). Only for single-source Applications.</p>                                                                                                                                                                                          | `false`  | `""`    |
+| `wait`                 | <p>Wait for the sync this sub-action requests to succeed and for the Application to be Healthy, then for the NebariApps it manages, if any, to be Ready. Fails as soon as the sync fails. A pack can stay OutOfSync after a successful sync when Argo CD diffs fields the API server defaults, so the sync status is not checked.</p>                                                                    | `false`  | `true`  |
+| `wait-timeout`         | <p>Seconds to wait for each of the sync to start, the sync to finish, the Application to be Healthy, and each NebariApp to be Ready.</p>                                                                                                                                                                                                                                                                 | `false`  | `600`   |
+
+<!-- action-docs-inputs source="add-software-pack/action.yml" -->
+
+<!-- action-docs-outputs source="add-software-pack/action.yml" -->
+
+#### Outputs
+
+| name   | description                                       |
+| ------ | ------------------------------------------------- |
+| `name` | <p>Name of the installed Argo CD Application.</p> |
+
+<!-- action-docs-outputs source="add-software-pack/action.yml" -->
 
 ### Keeping the deployment
 
